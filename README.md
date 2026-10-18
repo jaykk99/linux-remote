@@ -73,6 +73,12 @@ Read this before running it:
 - There is deliberately no command filtering. This is your machine and your
   commands.
 
-## Quick Links
+## Live URLs
 
 - Uncensored Harness: https://uncensored-harness-production.up.railway.app
+- Error Inbox: https://error-inbox.onrender.com
+- Bro Agent: https://bro-agent.onrender.com
+- ReconAnything: https://recon-anything.onrender.com
+- Kaggle Runner: https://kaggle-colab-runner.jayomer1234.workers.dev
+- Linux Remote App: https://linux-remote-app.onrender.com
+- Linux Remote Repo: https://github.com/jaykk99/linux-remote
