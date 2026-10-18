@@ -5,8 +5,29 @@ Run shell commands on your Linux machine straight from your phone.
 Two parts:
 
 - `server.py` - FastAPI server that runs commands you send it.
-- `app/index.html` - phone web app. Open it in your phone browser, type the
-  server URL and API key, then type commands.
+- `app/` - installable phone app (PWA). Install it on your phone, set a PIN
+  once, enter the API key and server URL once, then just unlock with your
+  PIN and type commands.
+
+## Phone app (install it)
+
+The app is a PWA, so it installs like a real app:
+
+1. **Serve the `app/` folder over HTTPS or localhost.** The server itself
+   can do it: `cd app && python3 -m http.server 8080` on the Linux box,
+   then open `http://<linux-tailscale-ip>:8080` on your phone.
+   (Service workers need HTTPS or localhost. Tailscale IPs count as
+   secure enough on Android Chrome.)
+2. **Android Chrome:** tap the three-dot menu > "Add to Home screen" >
+   "Install". It now opens fullscreen like a native app.
+3. **iPhone Safari:** Share button > "Add to Home Screen".
+
+First run: set a 4-6 digit PIN, confirm it, then paste the API key and
+server URL. After that, every launch just asks for the PIN. The key and
+URL stay saved on the phone. Tap the gear icon to change them or to lock
+the app.
+
+The PIN is stored as a SHA-256 hash, never in plaintext.
 
 ## Setup (on the Linux machine)
 

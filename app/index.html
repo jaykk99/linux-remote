@@ -3,7 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>linux-remote</title>
+<title>Linux Remote</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0d0d10">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Linux Remote">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <style>
   :root {
     --bg: #0d0d10; --panel: #141418; --panel2: #1b1b21; --border: #26262e;
@@ -18,6 +26,57 @@
     display: flex; flex-direction: column; overflow: hidden;
     -webkit-font-smoothing: antialiased;
   }
+  .screen { display: none; flex: 1; flex-direction: column; min-height: 0; }
+  .screen.active { display: flex; }
+
+  /* ---------- lock / setup screens ---------- */
+  #screen-lock, #screen-setup {
+    align-items: center; justify-content: center; padding: 24px; gap: 18px;
+    text-align: center;
+  }
+  .locklogo {
+    width: 72px; height: 72px; border-radius: 18px; background: var(--panel2);
+    border: 1px solid var(--border); display: flex; align-items: center;
+    justify-content: center; font-size: 30px; font-weight: 700; color: var(--accent);
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  .locktitle { font-size: 20px; font-weight: 700; }
+  .locksub { color: var(--dim); font-size: 14px; line-height: 1.6; max-width: 300px; }
+  .locksub.err { color: var(--red); }
+  #pindots { display: flex; gap: 12px; margin: 6px 0 10px; }
+  .pindot {
+    width: 16px; height: 16px; border-radius: 50%;
+    border: 2px solid var(--dim); background: transparent;
+  }
+  .pindot.filled { background: var(--accent); border-color: var(--accent); }
+  #pinpad {
+    display: grid; grid-template-columns: repeat(3, 84px); gap: 12px;
+    justify-content: center;
+  }
+  .pinkey {
+    width: 84px; height: 84px; border-radius: 50%;
+    background: var(--panel2); border: 1px solid var(--border);
+    color: var(--text); font-size: 26px; font-weight: 600; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-family: inherit; padding: 0; min-height: 0;
+  }
+  .pinkey:active { background: var(--accent); border-color: var(--accent); color: #06210f; transform: scale(0.95); }
+  .pinkey.util { font-size: 16px; color: var(--dim); }
+
+  /* ---------- setup form ---------- */
+  .setupform { width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 12px; }
+  .setupform input {
+    width: 100%; background: var(--panel2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 10px; padding: 14px; font-size: 16px;
+  }
+  .setupform input:focus { outline: none; border-color: var(--accent); }
+  .setupform label { text-align: left; font-size: 13px; color: var(--dim); font-weight: 600; }
+  .stepbadge {
+    font-size: 12px; color: var(--accent); font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1px;
+  }
+
+  /* ---------- app screen ---------- */
   #topbar {
     flex-shrink: 0; padding: 12px 14px; border-bottom: 1px solid var(--border);
     background: var(--panel); display: flex; align-items: center; gap: 10px;
@@ -31,11 +90,16 @@
   #status.ok { color: var(--accent); }
   #status.bad .dot { background: var(--red); }
   #status.bad { color: var(--red); }
+  #gearbtn {
+    background: none; border: 1px solid var(--border); border-radius: 10px;
+    color: var(--text); font-size: 18px; width: 44px; height: 44px; min-height: 0;
+    padding: 0; cursor: pointer;
+  }
   #settings {
     flex-shrink: 0; padding: 12px 14px; border-bottom: 1px solid var(--border);
     background: var(--panel); display: flex; flex-direction: column; gap: 10px;
   }
-  #settings.collapsed .fieldrow { display: none; }
+  #settings.hidden { display: none; }
   .fieldrow { display: flex; gap: 8px; }
   .fieldrow input {
     flex: 1; min-width: 0; background: var(--panel2); border: 1px solid var(--border);
@@ -50,7 +114,7 @@
   }
   button:active { transform: scale(0.97); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #06210f; flex: 1; }
-  button.ghost { flex: 0 0 auto; }
+  button.danger { border-color: var(--red); color: var(--red); }
   #output {
     flex: 1; overflow-y: auto; padding: 14px; font-family: ui-monospace, Menlo, monospace;
     font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
@@ -80,60 +144,241 @@
 </head>
 <body>
 
-<div id="topbar">
-  <h1>linux-remote</h1>
-  <div id="status"><span class="dot"></span><span id="statustext">not tested</span></div>
+<!-- PIN LOCK -->
+<div class="screen" id="screen-lock">
+  <div class="locklogo">&gt;_</div>
+  <div class="locktitle">Linux Remote</div>
+  <div class="locksub" id="lockmsg">Enter your PIN to unlock.</div>
+  <div id="pindots"></div>
+  <div id="pinpad"></div>
 </div>
 
-<div id="settings">
-  <div class="btnrow">
-    <button class="primary" id="testbtn">Test connection</button>
-    <button class="ghost" id="togglebtn" title="Show or hide settings">Settings</button>
-  </div>
-  <div class="fieldrow">
-    <input id="url" type="url" placeholder="Server URL, e.g. http://100.x.y.z:8000"
-           autocomplete="off" autocapitalize="off" spellcheck="false">
-  </div>
-  <div class="fieldrow">
-    <input id="apikey" type="password" placeholder="API key"
-           autocomplete="off" autocapitalize="off" spellcheck="false">
+<!-- FIRST-RUN SETUP -->
+<div class="screen" id="screen-setup">
+  <div class="locklogo">&gt;_</div>
+  <div class="stepbadge" id="setupstep">Step 1 of 2</div>
+  <div class="locktitle" id="setuptitle">Set a PIN</div>
+  <div class="locksub" id="setupmsg">Pick a 4 to 6 digit PIN. You will enter it every time you open the app.</div>
+  <div id="setuppindots"></div>
+  <div id="setuppinpad"></div>
+  <div class="setupform" id="setupform" style="display:none">
+    <div>
+      <label for="setup-url">Server URL</label>
+      <input id="setup-url" type="url" placeholder="http://100.x.y.z:8000"
+             autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <div>
+      <label for="setup-key">API key</label>
+      <input id="setup-key" type="password" placeholder="Paste the key from your server"
+             autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <button class="primary" id="setupdone">Save and start</button>
   </div>
 </div>
 
-<div id="output">
-  <div class="hint" id="hint">
-    Set the server URL and API key above, hit Test connection,<br>
-    then type commands below. Up/down arrows cycle history.
+<!-- MAIN APP -->
+<div class="screen" id="screen-app">
+  <div id="topbar">
+    <h1>Linux Remote</h1>
+    <div id="status"><span class="dot"></span><span id="statustext">not tested</span></div>
+    <button id="gearbtn" title="Settings">&#9881;</button>
   </div>
-</div>
 
-<div id="composer">
-  <input id="cmd" type="text" placeholder="command..." autocomplete="off"
-         autocapitalize="off" autocorrect="off" spellcheck="false">
-  <button id="send" class="primary">Run</button>
+  <div id="settings" class="hidden">
+    <div class="fieldrow">
+      <input id="url" type="url" placeholder="Server URL, e.g. http://100.x.y.z:8000"
+             autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <div class="fieldrow">
+      <input id="apikey" type="password" placeholder="API key"
+             autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <div class="btnrow">
+      <button class="primary" id="testbtn">Test connection</button>
+      <button class="danger" id="lockbtn">Lock</button>
+    </div>
+  </div>
+
+  <div id="output">
+    <div class="hint" id="hint">
+      Type commands below. Up/down arrows cycle history.
+    </div>
+  </div>
+
+  <div id="composer">
+    <input id="cmd" type="text" placeholder="command..." autocomplete="off"
+           autocapitalize="off" autocorrect="off" spellcheck="false">
+    <button id="send" class="primary">Run</button>
+  </div>
 </div>
 
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
+
+// ---------- crypto: SHA-256 hash of PIN, never stored raw ----------
+async function sha256hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256",
+    new TextEncoder().encode("lrpin:" + text));
+  return Array.from(new Uint8Array(buf))
+    .map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// ---------- PIN pad builder ----------
+function buildPinPad(padEl, dotsEl, maxLen, onComplete) {
+  let pin = "";
+  const render = () => {
+    dotsEl.innerHTML = "";
+    for (let i = 0; i < maxLen; i++) {
+      const d = document.createElement("div");
+      d.className = "pindot" + (i < pin.length ? " filled" : "");
+      dotsEl.appendChild(d);
+    }
+  };
+  const keys = ["1","2","3","4","5","6","7","8","9","ok","0","bk"];
+  padEl.innerHTML = "";
+  const okBtns = [];
+  keys.forEach(k => {
+    const b = document.createElement("button");
+    b.className = "pinkey" + (k === "ok" || k === "bk" ? " util" : "");
+    b.type = "button";
+    if (k === "ok") { b.innerHTML = "&#10003;"; b.disabled = true; b.style.opacity = "0.3"; okBtns.push(b); }
+    else if (k === "bk") { b.innerHTML = "&#9003;"; }
+    else { b.textContent = k; }
+    b.onclick = () => {
+      if (k === "bk") { pin = pin.slice(0, -1); }
+      else if (k === "ok") {
+        if (pin.length >= 4) {
+          const done = pin; pin = ""; setTimeout(render, 150);
+          onComplete(done); return;
+        } else return;
+      }
+      else if (pin.length < maxLen) { pin += k; }
+      render();
+      okBtns.forEach(ob => {
+        const ok = pin.length >= 4;
+        ob.disabled = !ok; ob.style.opacity = ok ? "1" : "0.3";
+      });
+      if (pin.length === maxLen) {
+        const done = pin; pin = ""; setTimeout(render, 150);
+        onComplete(done);
+      }
+    };
+    padEl.appendChild(b);
+  });
+  render();
+  return { reset() { pin = ""; render(); } };
+}
+
+// ---------- screens ----------
+const screens = ["screen-lock", "screen-setup", "screen-app"];
+function show(name) {
+  screens.forEach(s => $(s).classList.toggle("active", s === name));
+}
+
+// ---------- setup flow ----------
+let firstPin = null;
+let setupStage = "pin"; // pin -> confirm -> details
+
+function runSetup() {
+  show("screen-setup");
+  $("setupstep").textContent = "Step 1 of 2";
+  $("setuptitle").textContent = "Set a PIN";
+  $("setupmsg").textContent = "Pick a 4 to 6 digit PIN. You will enter it every time you open the app.";
+  $("setupmsg").classList.remove("err");
+  $("setupform").style.display = "none";
+  $("setuppinpad").style.display = "";
+  $("setuppindots").style.display = "";
+  setupStage = "pin";
+  buildPinPad($("setuppinpad"), $("setuppindots"), 6, pin => {
+    if (pin.length < 4) {
+      $("setupmsg").textContent = "PIN must be at least 4 digits. Try again.";
+      $("setupmsg").classList.add("err");
+      return;
+    }
+    if (setupStage === "pin") {
+      firstPin = pin;
+      setupStage = "confirm";
+      $("setuptitle").textContent = "Confirm PIN";
+      $("setupmsg").textContent = "Enter the same PIN again.";
+      $("setupmsg").classList.remove("err");
+      buildPinPad($("setuppinpad"), $("setuppindots"), 6, pin2 => {
+        if (pin2 !== firstPin) {
+          setupStage = "pin"; firstPin = null;
+          $("setuptitle").textContent = "Set a PIN";
+          $("setupmsg").textContent = "PINs did not match. Start over.";
+          $("setupmsg").classList.add("err");
+          runSetup();
+          return;
+        }
+        // PIN confirmed: store hash, move to step 2.
+        sha256hex(firstPin).then(h => {
+          localStorage.setItem("lr_pin", h);
+          firstPin = null;
+          setupStage = "details";
+          $("setupstep").textContent = "Step 2 of 2";
+          $("setuptitle").textContent = "Connect your server";
+          $("setupmsg").textContent = "Enter these once. They stay saved on this phone.";
+          $("setupmsg").classList.remove("err");
+          $("setuppinpad").style.display = "none";
+          $("setuppindots").style.display = "none";
+          $("setupform").style.display = "";
+        });
+      });
+    }
+  });
+}
+
+$("setupdone").onclick = () => {
+  const url = $("setup-url").value.trim().replace(/\/+$/, "");
+  const key = $("setup-key").value.trim();
+  if (!url || !key) {
+    $("setupmsg").textContent = "Enter both the server URL and the API key.";
+    $("setupmsg").classList.add("err");
+    return;
+  }
+  localStorage.setItem("lr_url", url);
+  localStorage.setItem("lr_key", key);
+  enterApp();
+};
+
+// ---------- unlock ----------
+const lockPad = buildPinPad($("pinpad"), $("pindots"), 6, async pin => {
+  const h = await sha256hex(pin);
+  if (h === localStorage.getItem("lr_pin")) {
+    $("lockmsg").textContent = "Enter your PIN to unlock.";
+    $("lockmsg").classList.remove("err");
+    enterApp();
+  } else {
+    $("lockmsg").textContent = "Wrong PIN. Try again.";
+    $("lockmsg").classList.add("err");
+    lockPad.reset();
+  }
+});
+
+// ---------- main app ----------
 const urlEl = $("url"), keyEl = $("apikey"), cmdEl = $("cmd"),
       outEl = $("output"), hintEl = $("hint"),
       statusEl = $("status"), statusText = $("statustext");
 
-// Load saved settings.
-urlEl.value = localStorage.getItem("lr_url") || "";
-keyEl.value = localStorage.getItem("lr_key") || "";
+function enterApp() {
+  show("screen-app");
+  urlEl.value = localStorage.getItem("lr_url") || "";
+  keyEl.value = localStorage.getItem("lr_key") || "";
+  if (urlEl.value) testConnection();
+  cmdEl.focus();
+}
+
+$("gearbtn").onclick = () => $("settings").classList.toggle("hidden");
+$("lockbtn").onclick = () => { show("screen-lock"); lockPad.reset(); };
+
 urlEl.addEventListener("input", () => localStorage.setItem("lr_url", urlEl.value.trim()));
 keyEl.addEventListener("input", () => localStorage.setItem("lr_key", keyEl.value.trim()));
-
-// Collapse settings once configured and tested.
-$("togglebtn").onclick = () => $("settings").classList.toggle("collapsed");
 
 function setStatus(state, text) {
   statusEl.className = state;
   statusText.textContent = text;
 }
-
 function baseUrl() {
   return (urlEl.value || "").trim().replace(/\/+$/, "");
 }
@@ -144,22 +389,15 @@ async function testConnection() {
   setStatus("", "testing...");
   try {
     const r = await fetch(base + "/health", { method: "GET" });
-    if (r.ok) {
-      setStatus("ok", "connected");
-      $("settings").classList.add("collapsed");
-    } else {
-      setStatus("bad", "HTTP " + r.status);
-    }
-  } catch (e) {
-    setStatus("bad", "unreachable");
-  }
+    if (r.ok) { setStatus("ok", "connected"); $("settings").classList.add("hidden"); }
+    else { setStatus("bad", "HTTP " + r.status); }
+  } catch (e) { setStatus("bad", "unreachable"); }
 }
 $("testbtn").onclick = testConnection;
 
 function esc(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-
 function addEntry(command, stdout, stderr, exitCode) {
   if (hintEl) hintEl.remove();
   const div = document.createElement("div");
@@ -173,7 +411,6 @@ function addEntry(command, stdout, stderr, exitCode) {
   outEl.appendChild(div);
   outEl.scrollTop = outEl.scrollHeight;
 }
-
 function addError(command, msg) {
   if (hintEl) hintEl.remove();
   const div = document.createElement("div");
@@ -184,7 +421,6 @@ function addError(command, msg) {
   outEl.scrollTop = outEl.scrollHeight;
 }
 
-// Command history.
 let history = [];
 let histIdx = -1;
 try { history = JSON.parse(localStorage.getItem("lr_hist") || "[]"); } catch (e) { history = []; }
@@ -232,8 +468,15 @@ cmdEl.addEventListener("keydown", e => {
   }
 });
 
-// Auto-test on load if settings exist.
-if (urlEl.value) testConnection();
+// ---------- boot ----------
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("sw.js").catch(() => {});
+}
+if (!localStorage.getItem("lr_pin")) {
+  runSetup();
+} else {
+  show("screen-lock");
+}
 </script>
 </body>
 </html>
