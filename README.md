@@ -22,7 +22,8 @@ The app is a PWA, so it installs like a real app:
    "Install". It now opens fullscreen like a native app.
 3. **iPhone Safari:** Share button > "Add to Home Screen".
 
-First run: set a 4-6 digit PIN, confirm it, then paste the API key and
+First run: set a 4-6 digit PIN (tap the checkmark key to finish a 4 or 5
+digit PIN), confirm it, then paste the API key and
 server URL. After that, every launch just asks for the PIN. The key and
 URL stay saved on the phone. Tap the gear icon to change them or to lock
 the app.

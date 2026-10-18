@@ -121,6 +121,8 @@
   }
   .pinkey.util { font-size: 15px; color: var(--text2); font-weight: 600; letter-spacing: 0.5px; }
   .pinkey.util:active { color: #fff; }
+  .pinkey.ok { color: var(--accent); font-size: 26px; }
+  .pinkey.ok:active { color: #fff; }
   @keyframes shake {
     0%, 100% { transform: translateX(0); }
     20%, 60% { transform: translateX(-9px); }
@@ -365,7 +367,7 @@
   <div class="locklogo">&gt;_</div>
   <div class="stepbadge" id="setupstep">Step 1 of 2</div>
   <div class="locktitle" id="setuptitle">Set a PIN</div>
-  <div class="locksub" id="setupmsg">Enter a 4 to 6 digit PIN. You will enter it every time you open the app.</div>
+  <div class="locksub" id="setupmsg">Enter a 4 to 6 digit PIN. Tap the checkmark when done with a 4 or 5 digit PIN.</div>
   <div class="pindots" id="setuppindots"></div>
   <div class="pinpad" id="setuppinpad"></div>
   <div class="setupform" id="setupform" style="display:none">
@@ -444,6 +446,8 @@ async function sha256hex(text) {
 }
 
 // ---------- PIN pad builder ----------
+// 4 to 6 digit PINs. The checkmark key submits a 4 or 5 digit PIN early;
+// entering a 6th digit submits automatically.
 function buildPinPad(padEl, dotsEl, maxLen, onComplete, onWrong) {
   let pin = "";
   const render = () => {
@@ -454,29 +458,33 @@ function buildPinPad(padEl, dotsEl, maxLen, onComplete, onWrong) {
       dotsEl.appendChild(d);
     }
   };
-  const keys = ["1","2","3","4","5","6","7","8","9","","0","bk"];
+  const submit = () => {
+    if (pin.length < 4) { if (onWrong) onWrong(); return; }
+    render();
+    const done = pin; pin = "";
+    setTimeout(() => { render(); onComplete(done); }, 120);
+  };
+  const keys = ["1","2","3","4","5","6","7","8","9","ok","0","bk"];
   padEl.innerHTML = "";
   keys.forEach(k => {
     const b = document.createElement("button");
     b.type = "button";
-    if (k === "") { b.className = "pinkey spacer"; b.style.visibility = "hidden"; b.tabIndex = -1; }
+    if (k === "ok") {
+      b.className = "pinkey util ok"; b.innerHTML = "&#10003;";
+      b.setAttribute("aria-label", "Done");
+      b.title = "Done";
+    }
     else if (k === "bk") { b.className = "pinkey util"; b.innerHTML = "&#9003;"; }
     else { b.className = "pinkey"; b.textContent = k; }
-    if (k !== "") {
-      b.onclick = () => {
-        if (k === "bk") { pin = pin.slice(0, -1); }
-        else if (pin.length < maxLen) {
-          pin += k;
-          if (pin.length === maxLen) {
-            render();
-            const done = pin; pin = "";
-            setTimeout(() => { render(); onComplete(done); }, 120);
-            return;
-          }
-        }
-        render();
-      };
-    }
+    b.onclick = () => {
+      if (k === "bk") { pin = pin.slice(0, -1); }
+      else if (k === "ok") { submit(); return; }
+      else if (pin.length < maxLen) {
+        pin += k;
+        if (pin.length === maxLen) { submit(); return; }
+      }
+      render();
+    };
     padEl.appendChild(b);
   });
   render();
@@ -504,20 +512,20 @@ function runSetup() {
   show("screen-setup");
   $("setupstep").textContent = "Step 1 of 2";
   $("setuptitle").textContent = "Set a PIN";
-  $("setupmsg").textContent = "Enter a 4 to 6 digit PIN. You will enter it every time you open the app.";
+  $("setupmsg").textContent = "Enter a 4 to 6 digit PIN. Tap the checkmark when done with a 4 or 5 digit PIN.";
   $("setupmsg").classList.remove("err");
   $("setupform").style.display = "none";
   $("setuppinpad").style.display = "";
   $("setuppindots").style.display = "";
   setupStage = "pin";
   let setupPad;
+  const tooShort = pad => {
+    $("setupmsg").textContent = "PIN must be at least 4 digits. Try again.";
+    $("setupmsg").classList.add("err");
+    pad.shake();
+  };
   setupPad = buildPinPad($("setuppinpad"), $("setuppindots"), 6, pin => {
-    if (pin.length < 4) {
-      $("setupmsg").textContent = "PIN must be at least 4 digits. Try again.";
-      $("setupmsg").classList.add("err");
-      setupPad.shake();
-      return;
-    }
+    if (pin.length < 4) { tooShort(setupPad); return; } // backstop: submit() already enforces this
     if (setupStage === "pin") {
       firstPin = pin;
       setupStage = "confirm";
@@ -547,9 +555,9 @@ function runSetup() {
           $("setuppindots").style.display = "none";
           $("setupform").style.display = "";
         });
-      });
+      }, () => tooShort(confirmPad));
     }
-  });
+  }, () => tooShort(setupPad));
 }
 
 $("setupdone").onclick = () => {
@@ -584,6 +592,10 @@ const lockPad = buildPinPad($("pinpad"), $("pindots"), 6, async pin => {
     lockPad.reset();
     lockPad.shake();
   }
+}, () => {
+  $("lockmsg").textContent = "Enter at least 4 digits, then tap the checkmark.";
+  $("lockmsg").classList.add("err");
+  lockPad.shake();
 });
 
 // ---------- main app ----------

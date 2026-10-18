@@ -17,6 +17,7 @@ import datetime
 import os
 import secrets
 import subprocess
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException
@@ -27,7 +28,37 @@ DATA_DIR = Path.home() / ".linux-remote"
 KEY_FILE = DATA_DIR / "key"
 LOG_FILE = DATA_DIR / "commands.log"
 
-app = FastAPI(title="linux-remote")
+
+def get_or_create_key() -> tuple[str, bool]:
+    """Return (key, is_new). Key file is 0600, dir is 0700."""
+    DATA_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if KEY_FILE.exists():
+        return KEY_FILE.read_text().strip(), False
+    key = secrets.token_urlsafe(32)
+    KEY_FILE.write_text(key + "\n")
+    KEY_FILE.chmod(0o600)
+    return key, True
+
+
+API_KEY, KEY_IS_NEW = get_or_create_key()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("=" * 60)
+    print("linux-remote server starting")
+    if KEY_IS_NEW:
+        # Printed only on first run, as the README promises.
+        print(f"API key: {API_KEY}")
+        print("Save that key in the phone app. It is only printed here once.")
+    else:
+        print(f"API key: loaded from {KEY_FILE} (not shown)")
+    print(f"Key file: {KEY_FILE}")
+    print("=" * 60)
+    yield
+
+
+app = FastAPI(title="linux-remote", lifespan=lifespan)
 
 # CORS: the phone app is hosted on Render (or another origin) and calls this
 # server directly. This is a personal server reached over Tailscale, so allow
@@ -76,9 +107,11 @@ class ExecResponse(BaseModel):
 
 def _log_command(command: str, exit_code: int) -> None:
     ts = datetime.datetime.now().isoformat(timespec="seconds")
+    # Keep one command per log line: escape embedded newlines.
+    safe = command.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r")
     DATA_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     with LOG_FILE.open("a") as f:
-        f.write(f"[{ts}] exit={exit_code} cmd={command}\n")
+        f.write(f"[{ts}] exit={exit_code} cmd={safe}\n")
 
 
 @app.get("/health")
