@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>linux-remote</title>
+<style>
+  :root {
+    --bg: #0d0d10; --panel: #141418; --panel2: #1b1b21; --border: #26262e;
+    --text: #ececf1; --dim: #9a9aa6; --accent: #4caf7d; --red: #e57373;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    background: var(--bg); color: var(--text); height: 100dvh;
+    display: flex; flex-direction: column; overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  #topbar {
+    flex-shrink: 0; padding: 12px 14px; border-bottom: 1px solid var(--border);
+    background: var(--panel); display: flex; align-items: center; gap: 10px;
+  }
+  #topbar h1 { font-size: 17px; font-weight: 700; flex: 1; }
+  #status {
+    font-size: 12px; color: var(--dim); display: flex; align-items: center; gap: 6px;
+  }
+  #status .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--dim); }
+  #status.ok .dot { background: var(--accent); }
+  #status.ok { color: var(--accent); }
+  #status.bad .dot { background: var(--red); }
+  #status.bad { color: var(--red); }
+  #settings {
+    flex-shrink: 0; padding: 12px 14px; border-bottom: 1px solid var(--border);
+    background: var(--panel); display: flex; flex-direction: column; gap: 10px;
+  }
+  #settings.collapsed .fieldrow { display: none; }
+  .fieldrow { display: flex; gap: 8px; }
+  .fieldrow input {
+    flex: 1; min-width: 0; background: var(--panel2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 10px; padding: 12px; font-size: 15px;
+  }
+  .fieldrow input:focus { outline: none; border-color: var(--accent); }
+  .btnrow { display: flex; gap: 8px; }
+  button {
+    font-family: inherit; cursor: pointer; border-radius: 10px;
+    border: 1px solid var(--border); background: var(--panel2); color: var(--text);
+    padding: 12px 18px; font-size: 15px; font-weight: 600; min-height: 48px;
+  }
+  button:active { transform: scale(0.97); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #06210f; flex: 1; }
+  button.ghost { flex: 0 0 auto; }
+  #output {
+    flex: 1; overflow-y: auto; padding: 14px; font-family: ui-monospace, Menlo, monospace;
+    font-size: 13px; line-height: 1.55; white-space: pre-wrap; word-break: break-word;
+  }
+  .entry { margin-bottom: 14px; }
+  .entry .cmd { color: var(--accent); font-weight: 600; }
+  .entry .cmd::before { content: "$ "; color: var(--dim); }
+  .entry .out { color: var(--text); margin-top: 4px; }
+  .entry .err { color: var(--red); margin-top: 4px; }
+  .entry .code { color: var(--dim); font-size: 11px; margin-top: 4px; }
+  .entry .code.bad { color: var(--red); }
+  .hint { color: var(--dim); font-size: 13px; text-align: center; margin-top: 30px; line-height: 1.7; }
+  #composer {
+    flex-shrink: 0; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--border); background: var(--panel);
+    display: flex; gap: 8px; align-items: center;
+  }
+  #cmd {
+    flex: 1; min-width: 0; background: var(--panel2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 10px; padding: 13px 14px; font-size: 16px;
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  #cmd:focus { outline: none; border-color: var(--accent); }
+  #send { min-width: 64px; }
+  #send:disabled { opacity: 0.5; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <h1>linux-remote</h1>
+  <div id="status"><span class="dot"></span><span id="statustext">not tested</span></div>
+</div>
+
+<div id="settings">
+  <div class="btnrow">
+    <button class="primary" id="testbtn">Test connection</button>
+    <button class="ghost" id="togglebtn" title="Show or hide settings">Settings</button>
+  </div>
+  <div class="fieldrow">
+    <input id="url" type="url" placeholder="Server URL, e.g. http://100.x.y.z:8000"
+           autocomplete="off" autocapitalize="off" spellcheck="false">
+  </div>
+  <div class="fieldrow">
+    <input id="apikey" type="password" placeholder="API key"
+           autocomplete="off" autocapitalize="off" spellcheck="false">
+  </div>
+</div>
+
+<div id="output">
+  <div class="hint" id="hint">
+    Set the server URL and API key above, hit Test connection,<br>
+    then type commands below. Up/down arrows cycle history.
+  </div>
+</div>
+
+<div id="composer">
+  <input id="cmd" type="text" placeholder="command..." autocomplete="off"
+         autocapitalize="off" autocorrect="off" spellcheck="false">
+  <button id="send" class="primary">Run</button>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const urlEl = $("url"), keyEl = $("apikey"), cmdEl = $("cmd"),
+      outEl = $("output"), hintEl = $("hint"),
+      statusEl = $("status"), statusText = $("statustext");
+
+// Load saved settings.
+urlEl.value = localStorage.getItem("lr_url") || "";
+keyEl.value = localStorage.getItem("lr_key") || "";
+urlEl.addEventListener("input", () => localStorage.setItem("lr_url", urlEl.value.trim()));
+keyEl.addEventListener("input", () => localStorage.setItem("lr_key", keyEl.value.trim()));
+
+// Collapse settings once configured and tested.
+$("togglebtn").onclick = () => $("settings").classList.toggle("collapsed");
+
+function setStatus(state, text) {
+  statusEl.className = state;
+  statusText.textContent = text;
+}
+
+function baseUrl() {
+  return (urlEl.value || "").trim().replace(/\/+$/, "");
+}
+
+async function testConnection() {
+  const base = baseUrl();
+  if (!base) { setStatus("bad", "no URL"); return; }
+  setStatus("", "testing...");
+  try {
+    const r = await fetch(base + "/health", { method: "GET" });
+    if (r.ok) {
+      setStatus("ok", "connected");
+      $("settings").classList.add("collapsed");
+    } else {
+      setStatus("bad", "HTTP " + r.status);
+    }
+  } catch (e) {
+    setStatus("bad", "unreachable");
+  }
+}
+$("testbtn").onclick = testConnection;
+
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function addEntry(command, stdout, stderr, exitCode) {
+  if (hintEl) hintEl.remove();
+  const div = document.createElement("div");
+  div.className = "entry";
+  let html = '<div class="cmd">' + esc(command) + "</div>";
+  if (stdout) html += '<div class="out">' + esc(stdout) + "</div>";
+  if (stderr) html += '<div class="err">' + esc(stderr) + "</div>";
+  const cls = exitCode === 0 ? "code" : "code bad";
+  html += '<div class="' + cls + '">exit code: ' + exitCode + "</div>";
+  div.innerHTML = html;
+  outEl.appendChild(div);
+  outEl.scrollTop = outEl.scrollHeight;
+}
+
+function addError(command, msg) {
+  if (hintEl) hintEl.remove();
+  const div = document.createElement("div");
+  div.className = "entry";
+  div.innerHTML = '<div class="cmd">' + esc(command) + '</div>' +
+    '<div class="err">' + esc(msg) + "</div>";
+  outEl.appendChild(div);
+  outEl.scrollTop = outEl.scrollHeight;
+}
+
+// Command history.
+let history = [];
+let histIdx = -1;
+try { history = JSON.parse(localStorage.getItem("lr_hist") || "[]"); } catch (e) { history = []; }
+function saveHistory() {
+  try { localStorage.setItem("lr_hist", JSON.stringify(history.slice(-100))); } catch (e) {}
+}
+
+async function runCommand() {
+  const command = cmdEl.value.trim();
+  if (!command) return;
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) { addError(command, "Set the server URL and API key first."); return; }
+  history.push(command); histIdx = history.length; saveHistory();
+  cmdEl.value = "";
+  $("send").disabled = true;
+  try {
+    const r = await fetch(base + "/exec", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-Key": key },
+      body: JSON.stringify({ command })
+    });
+    if (r.status === 401) { addError(command, "Bad API key (401)."); setStatus("bad", "bad key"); return; }
+    if (!r.ok) { addError(command, "Server error: HTTP " + r.status); return; }
+    const data = await r.json();
+    addEntry(command, data.stdout || "", data.stderr || "", data.exit_code);
+  } catch (e) {
+    addError(command, "Request failed: " + (e.message || e));
+    setStatus("bad", "unreachable");
+  } finally {
+    $("send").disabled = false;
+    cmdEl.focus();
+  }
+}
+
+$("send").onclick = runCommand;
+cmdEl.addEventListener("keydown", e => {
+  if (e.key === "Enter") { runCommand(); }
+  else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    if (history.length && histIdx > 0) { histIdx--; cmdEl.value = history[histIdx]; }
+  } else if (e.key === "ArrowDown") {
+    e.preventDefault();
+    if (histIdx < history.length - 1) { histIdx++; cmdEl.value = history[histIdx]; }
+    else { histIdx = history.length; cmdEl.value = ""; }
+  }
+});
+
+// Auto-test on load if settings exist.
+if (urlEl.value) testConnection();
+</script>
+</body>
+</html>
