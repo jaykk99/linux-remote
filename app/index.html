@@ -158,7 +158,7 @@
   <div class="locklogo">&gt;_</div>
   <div class="stepbadge" id="setupstep">Step 1 of 2</div>
   <div class="locktitle" id="setuptitle">Set a PIN</div>
-  <div class="locksub" id="setupmsg">Pick a 4 to 6 digit PIN. You will enter it every time you open the app.</div>
+  <div class="locksub" id="setupmsg">Enter a 4-6 digit PIN. You will enter it every time you open the app.</div>
   <div id="setuppindots"></div>
   <div id="setuppinpad"></div>
   <div class="setupform" id="setupform" style="display:none">
@@ -284,7 +284,7 @@ function runSetup() {
   show("screen-setup");
   $("setupstep").textContent = "Step 1 of 2";
   $("setuptitle").textContent = "Set a PIN";
-  $("setupmsg").textContent = "Pick a 4 to 6 digit PIN. You will enter it every time you open the app.";
+  $("setupmsg").textContent = "Enter a 4-6 digit PIN. You will enter it every time you open the app.";
   $("setupmsg").classList.remove("err");
   $("setupform").style.display = "none";
   $("setuppinpad").style.display = "";
@@ -330,6 +330,12 @@ function runSetup() {
 }
 
 $("setupdone").onclick = () => {
+  // Safety: PIN must be set before we accept server details.
+  if (!localStorage.getItem("lr_pin")) {
+    setupStage = "pin"; firstPin = null;
+    runSetup();
+    return;
+  }
   const url = $("setup-url").value.trim().replace(/\/+$/, "");
   const key = $("setup-key").value.trim();
   if (!url || !key) {

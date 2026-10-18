@@ -16,11 +16,11 @@ from __future__ import annotations
 import datetime
 import os
 import secrets
-import shlex
 import subprocess
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 DATA_DIR = Path.home() / ".linux-remote"
@@ -28,6 +28,17 @@ KEY_FILE = DATA_DIR / "key"
 LOG_FILE = DATA_DIR / "commands.log"
 
 app = FastAPI(title="linux-remote")
+
+# CORS: the phone app is hosted on Render (or another origin) and calls this
+# server directly. This is a personal server reached over Tailscale, so allow
+# all origins. Never expose this port to the public internet.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def get_or_create_key() -> str:
