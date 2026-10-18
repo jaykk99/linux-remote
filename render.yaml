@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: linux-remote-app
+    env: static
+    buildCommand: ""
+    staticPublishPath: app
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
