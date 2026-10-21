@@ -210,7 +210,7 @@
     border-bottom-width: 0;
     transition: max-height 0.3s cubic-bezier(0.32, 0.72, 0, 1), padding 0.3s cubic-bezier(0.32, 0.72, 0, 1);
   }
-  #settings.open { max-height: 280px; padding-top: 14px; padding-bottom: 14px; border-bottom-width: 1px; }
+  #settings.open { max-height: 460px; padding-top: 14px; padding-bottom: 14px; border-bottom-width: 1px; }
   .fieldrow { display: flex; gap: 8px; }
   .fieldrow input {
     flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--line);
@@ -271,8 +271,19 @@
     animation: rise 0.3s cubic-bezier(0.32, 0.72, 0, 1);
   }
   @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-  .entry .cmd { color: var(--accent); font-weight: 600; font-size: 13px; }
+  .entry .cmd { color: var(--accent); font-weight: 600; font-size: 13px; flex: 1; min-width: 0; }
   .entry .cmd::before { content: "$ "; color: var(--text3); font-weight: 400; }
+  .entryhead { display: flex; align-items: center; gap: 8px; }
+  .copybtn {
+    flex-shrink: 0; background: var(--surface2); border: 1px solid var(--line-soft);
+    color: var(--text2); font-size: 11.5px; font-weight: 600;
+    padding: 6px 11px; min-height: 0; border-radius: 9px; letter-spacing: -0.1px;
+  }
+  .copybtn:active { color: var(--accent); border-color: var(--accent); }
+  .entry .trunc {
+    color: var(--amber); font-size: 11.5px; margin-top: 8px; font-weight: 600;
+    font-family: var(--sans); letter-spacing: 0.2px;
+  }
   .entry .out { color: rgba(245, 245, 247, 0.88); margin-top: 8px; }
   .entry .err { color: var(--red); margin-top: 8px; }
   .entry .code {
@@ -301,16 +312,23 @@
     scrollbar-width: none; -webkit-overflow-scrolling: touch;
   }
   #quickbar::-webkit-scrollbar { display: none; }
+  .quickwrap { flex-shrink: 0; display: flex; align-items: stretch; }
   .quickcmd {
-    flex-shrink: 0; background: var(--surface); border: 1px solid var(--line-soft);
+    background: var(--surface); border: 1px solid var(--line-soft);
     color: var(--text2); font-family: var(--mono); font-size: 13px; font-weight: 500;
-    padding: 10px 16px; min-height: 0; border-radius: 12px; letter-spacing: -0.1px;
-    transition: all 0.16s ease;
+    padding: 10px 16px; min-height: 0; border-radius: 12px 0 0 12px; letter-spacing: -0.1px;
+    transition: all 0.16s ease; border-right-width: 0;
   }
   .quickcmd:active {
     color: #fff; background: var(--accent-deep); border-color: transparent;
     transform: scale(0.94);
   }
+  .quickrm {
+    background: var(--surface); border: 1px solid var(--line-soft);
+    color: var(--text3); font-size: 14px; font-weight: 600;
+    padding: 10px 11px; min-height: 0; border-radius: 0 12px 12px 0;
+  }
+  .quickrm:active { color: var(--red); border-color: rgba(255, 92, 84, 0.4); }
 
   /* ---------- composer ---------- */
   #composer {
@@ -405,9 +423,21 @@
       <input id="apikey" type="password" placeholder="API key"
              autocomplete="off" autocapitalize="off" spellcheck="false">
     </div>
+    <div class="fieldrow">
+      <input id="cwd" placeholder="Working dir, blank = home (e.g. projects/app)"
+             autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
+    <div class="fieldrow">
+      <input id="newquick" placeholder="New shortcut command..."
+             autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+      <button id="addquick" class="ghost" style="flex-shrink:0; min-height:0;">Add</button>
+    </div>
     <div class="btnrow">
       <button class="primary" id="testbtn">Test connection</button>
       <button class="danger" id="lockbtn">Lock</button>
+    </div>
+    <div class="btnrow">
+      <button class="ghost" id="rotatebtn" style="flex:1;">Rotate API key</button>
     </div>
   </div>
 
@@ -599,7 +629,7 @@ const lockPad = buildPinPad($("pinpad"), $("pindots"), 6, async pin => {
 });
 
 // ---------- main app ----------
-const urlEl = $("url"), keyEl = $("apikey"), cmdEl = $("cmd"),
+const urlEl = $("url"), keyEl = $("apikey"), cmdEl = $("cmd"), cwdEl = $("cwd"),
       outEl = $("output"), hintEl = $("hint"),
       statusEl = $("status"), statusText = $("statustext");
 
@@ -607,6 +637,7 @@ function enterApp() {
   show("screen-app");
   urlEl.value = localStorage.getItem("lr_url") || "";
   keyEl.value = localStorage.getItem("lr_key") || "";
+  cwdEl.value = localStorage.getItem("lr_cwd") || "";
   if (urlEl.value) testConnection();
   cmdEl.focus();
 }
@@ -616,6 +647,7 @@ $("lockbtn").onclick = () => { show("screen-lock"); lockPad.reset(); };
 
 urlEl.addEventListener("input", () => localStorage.setItem("lr_url", urlEl.value.trim()));
 keyEl.addEventListener("input", () => localStorage.setItem("lr_key", keyEl.value.trim()));
+cwdEl.addEventListener("input", () => localStorage.setItem("lr_cwd", cwdEl.value.trim()));
 
 function setStatus(state, text) {
   statusEl.className = state;
@@ -625,36 +657,116 @@ function baseUrl() {
   return (urlEl.value || "").trim().replace(/\/+$/, "");
 }
 
-async function testConnection() {
+async function testConnection(quiet) {
   const base = baseUrl();
-  if (!base) { setStatus("bad", "no URL"); return; }
-  setStatus("", "testing...");
+  if (!base) { if (!quiet) setStatus("bad", "no URL"); return; }
+  if (!quiet) setStatus("", "testing...");
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 10000);
     const r = await fetch(base + "/health", { method: "GET", signal: ctrl.signal });
     clearTimeout(t);
-    if (r.ok) { setStatus("ok", "connected"); $("settings").classList.remove("open"); }
+    if (r.ok) {
+      let host = "";
+      try { host = (await r.json()).host || ""; } catch (e) {}
+      setStatus("ok", "connected" + (host ? " · " + host : ""));
+      if (!quiet) $("settings").classList.remove("open");
+    }
     else { setStatus("bad", "HTTP " + r.status); }
   } catch (e) { setStatus("bad", "unreachable"); }
 }
-$("testbtn").onclick = testConnection;
+$("testbtn").onclick = () => testConnection(false);
+
+// Re-check the connection every minute while the app is open so a dropped
+// Tailscale link shows up in the status pill without a manual retest.
+setInterval(() => {
+  if ($("screen-app").classList.contains("active") && !running) testConnection(true);
+}, 60000);
+
+// ---------- rotate API key ----------
+$("rotatebtn").onclick = async () => {
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) { addError("", "Set the server URL and API key first."); return; }
+  if (!confirm("Rotate the API key? The old key stops working immediately.")) return;
+  try {
+    const r = await fetch(base + "/rotate-key", {
+      method: "POST",
+      headers: { "X-API-Key": key }
+    });
+    if (r.status === 401) { addError("", "Bad API key (401)."); return; }
+    if (!r.ok) { addError("", "Rotate failed: HTTP " + r.status); return; }
+    const data = await r.json();
+    keyEl.value = data.api_key || "";
+    localStorage.setItem("lr_key", keyEl.value);
+    addEntry("rotate-key", "API key rotated and saved on this phone.", "", 0, false);
+    setStatus("ok", "connected");
+  } catch (e) {
+    addError("rotate-key", "Request failed: " + (e.message || e));
+  }
+};
 
 function esc(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
-function addEntry(command, stdout, stderr, exitCode) {
+function copyText(text, btn) {
+  const done = () => {
+    const orig = btn.textContent;
+    btn.textContent = "Copied";
+    setTimeout(() => { btn.textContent = orig; }, 1200);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try { document.execCommand("copy"); done(); } catch (e) {}
+  document.body.removeChild(ta);
+}
+function addEntry(command, stdout, stderr, exitCode, truncated) {
   const hint = $("hint");
   if (hint) hint.remove();
   const div = document.createElement("div");
   div.className = "entry";
-  let html = '<div class="cmd">' + esc(command) + "</div>";
-  if (stdout) html += '<div class="out">' + esc(stdout) + "</div>";
-  if (stderr) html += '<div class="err">' + esc(stderr) + "</div>";
-  const cls = exitCode === 0 ? "code" : "code bad";
-  const mark = exitCode === 0 ? '<span class="okmark">&#10003;</span> ' : "";
-  html += '<div class="' + cls + '">' + mark + "exit " + exitCode + "</div>";
-  div.innerHTML = html;
+  const head = document.createElement("div");
+  head.className = "entryhead";
+  const cmdEl2 = document.createElement("div");
+  cmdEl2.className = "cmd";
+  cmdEl2.textContent = command;
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button"; copyBtn.className = "copybtn"; copyBtn.textContent = "Copy";
+  copyBtn.onclick = () => copyText(
+    "$ " + command + "\n" + (stdout || "") + (stderr || ""), copyBtn);
+  head.appendChild(cmdEl2);
+  head.appendChild(copyBtn);
+  div.appendChild(head);
+  if (stdout) {
+    const o = document.createElement("div");
+    o.className = "out"; o.textContent = stdout;
+    div.appendChild(o);
+  }
+  if (stderr) {
+    const e = document.createElement("div");
+    e.className = "err"; e.textContent = stderr;
+    div.appendChild(e);
+  }
+  if (truncated) {
+    const t = document.createElement("div");
+    t.className = "trunc";
+    t.textContent = "Output was truncated by the server.";
+    div.appendChild(t);
+  }
+  const code = document.createElement("div");
+  code.className = exitCode === 0 ? "code" : "code bad";
+  code.innerHTML = (exitCode === 0 ? '<span class="okmark">&#10003;</span> ' : "") +
+    "exit " + exitCode;
+  div.appendChild(code);
   outEl.appendChild(div);
   outEl.scrollTop = outEl.scrollHeight;
 }
@@ -679,22 +791,46 @@ $("clearbtn").onclick = () => {
   outEl.appendChild(hint);
 };
 
-// ---------- quick commands ----------
-const QUICK = ["ls -la", "pwd", "whoami", "df -h", "uptime", "free -h"];
+// ---------- quick commands (editable, saved on the phone) ----------
+const DEFAULT_QUICK = ["ls -la", "pwd", "whoami", "df -h", "uptime", "free -h"];
+let quickCmds = DEFAULT_QUICK.slice();
+try {
+  const saved = JSON.parse(localStorage.getItem("lr_quick") || "null");
+  if (Array.isArray(saved) && saved.length) quickCmds = saved.filter(c => typeof c === "string");
+} catch (e) {}
+function saveQuick() {
+  try { localStorage.setItem("lr_quick", JSON.stringify(quickCmds)); } catch (e) {}
+}
 function buildQuick() {
   const bar = $("quickbar");
   bar.innerHTML = "";
-  QUICK.forEach(c => {
+  quickCmds.forEach(c => {
+    const wrap = document.createElement("span");
+    wrap.className = "quickwrap";
     const b = document.createElement("button");
     b.type = "button"; b.className = "quickcmd"; b.textContent = c;
-    b.onclick = () => {
-      cmdEl.value = c;
-      runCommand();
+    b.onclick = () => runCommand(c);
+    const rm = document.createElement("button");
+    rm.type = "button"; rm.className = "quickrm"; rm.textContent = "×";
+    rm.title = "Remove shortcut"; rm.setAttribute("aria-label", "Remove " + c);
+    rm.onclick = () => {
+      quickCmds = quickCmds.filter(x => x !== c);
+      if (!quickCmds.length) quickCmds = DEFAULT_QUICK.slice();
+      saveQuick();
+      buildQuick();
     };
-    bar.appendChild(b);
+    wrap.appendChild(b);
+    wrap.appendChild(rm);
+    bar.appendChild(wrap);
   });
 }
 buildQuick();
+$("addquick").onclick = () => {
+  const v = $("newquick").value.trim();
+  if (!v) return;
+  if (!quickCmds.includes(v)) { quickCmds.push(v); saveQuick(); buildQuick(); }
+  $("newquick").value = "";
+};
 
 let history = [];
 let histIdx = -1;
@@ -722,14 +858,21 @@ async function runCommand(forceCmd) {
     const r = await fetch(base + "/exec", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-API-Key": key },
-      body: JSON.stringify({ command }),
+      body: JSON.stringify({ command, cwd: cwdEl.value.trim() || null }),
       signal: ctrl.signal
     });
     clearTimeout(t);
     if (r.status === 401) { addError(command, "Bad API key (401)."); setStatus("bad", "bad key"); return; }
+    if (r.status === 403) {
+      let detail = "Blocked by the server.";
+      try { detail = (await r.json()).detail || detail; } catch (e) {}
+      addError(command, detail);
+      return;
+    }
+    if (r.status === 429) { addError(command, "Too many failed attempts — try again later."); return; }
     if (!r.ok) { addError(command, "Server error: HTTP " + r.status); return; }
     const data = await r.json();
-    addEntry(command, data.stdout || "", data.stderr || "", data.exit_code);
+    addEntry(command, data.stdout || "", data.stderr || "", data.exit_code, !!data.truncated);
     setStatus("ok", "connected");
   } catch (e) {
     const msg = e.name === "AbortError" ? "Request timed out." : "Request failed: " + (e.message || e);

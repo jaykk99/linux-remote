@@ -58,9 +58,37 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
 
 ## API
 
-- `GET /health` - no auth, returns `{"ok": true}`
-- `POST /exec` - header `X-API-Key: <key>`, body `{"command": "ls ~"}`,
-  returns `{"stdout": "...", "stderr": "...", "exit_code": 0}`
+- `GET /health` - no auth, returns
+  `{"ok": true, "service": "linux-remote", "version": "...", "host": "...", "uptime_s": 123}`
+- `POST /exec` - header `X-API-Key: <key>`,
+  body `{"command": "ls ~", "cwd": "projects/app"}` (`cwd` optional,
+  must stay inside the workdir base),
+  returns `{"stdout": "...", "stderr": "...", "exit_code": 0,
+  "truncated": false, "duration_ms": 12}`.
+  Exit code 124 means the command hit the server timeout.
+- `POST /rotate-key` - header `X-API-Key: <current key>`. Mints a fresh
+  key, invalidates the old one immediately, and returns
+  `{"ok": true, "api_key": "<new key>"}`. Save the new key in the phone
+  app right away.
+- `GET /recent?n=50` - header `X-API-Key: <key>`. Last `n` audit-log
+  lines, newest first.
+
+## Configuration (env vars)
+
+- `PORT` - listen port (default 8000)
+- `LR_TIMEOUT` - per-command timeout in seconds (default 300)
+- `LR_MAX_COMMAND_LEN` - max command length in chars (default 32768)
+- `LR_MAX_OUTPUT_BYTES` - cap on captured stdout/stderr each
+  (default 1048576); over-limit output is truncated with a notice
+- `LR_MAX_BODY_BYTES` - max request body size (default 65536)
+- `LR_RATE_LIMIT` / `LR_RATE_WINDOW` - failed-auth attempts per window
+  in seconds before a temporary 429 ban (default 10 / 300)
+- `LR_ALLOW_DANGEROUS=1` - disable the destructive-command denylist
+  (default off)
+- `LR_LOG_MAX_BYTES` - rotate `commands.log` past this size
+  (default 5MB)
+- `LR_WORKDIR` - base dir commands may run in (default `$HOME`);
+  the `cwd` field in `/exec` must resolve inside it
 
 ## Security
 
@@ -69,10 +97,26 @@ Read this before running it:
 - Whoever has the API key gets **full shell access** to this machine.
   Keep the key secret. It lives at `~/.linux-remote/key` with 0600 perms.
 - Do **not** expose port 8000 to the public internet. Use Tailscale.
-- The key is a bearer secret. If it leaks, delete the key file and restart
-  to get a fresh one.
-- There is deliberately no command filtering. This is your machine and your
-  commands.
+- The key is a bearer secret. If it leaks, hit **Rotate API key** in the
+  phone app's settings (or `POST /rotate-key`) instead of restarting.
+- Failed API-key attempts are rate limited per IP (temporary 429 bans),
+  which blunts brute-force guessing.
+- As a typo guard, the server blocks obviously destructive commands
+  (`rm -rf /`, raw disk writes, `mkfs`, fork bombs, `reboot`, ...).
+  The phone app shows the block reason. Set `LR_ALLOW_DANGEROUS=1` on
+  the server to turn this off.
+- Every command is audit-logged with timestamp, client IP, working dir,
+  duration, and exit code to `~/.linux-remote/commands.log`
+  (auto-rotated). View it from the phone via `GET /recent`.
+
+## Phone app
+
+- Tap a shortcut chip to run it; tap the `x` on a chip to remove it.
+  Add your own shortcuts in Settings.
+- Set a working directory in Settings to run every command from there.
+- Each output card has a **Copy** button.
+- The status pill shows the server's hostname and re-checks every
+  minute, so a dropped Tailscale link shows up on its own.
 
 ## Live URL
 
