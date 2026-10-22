@@ -61,8 +61,9 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
 - `GET /health` - no auth, returns
   `{"ok": true, "service": "linux-remote", "version": "...", "host": "...", "uptime_s": 123}`
 - `POST /exec` - header `X-API-Key: <key>`,
-  body `{"command": "ls ~", "cwd": "projects/app"}` (`cwd` optional,
-  must stay inside the workdir base),
+  body `{"command": "ls ~", "cwd": "projects/app", "timeout_s": 30}`
+  (`cwd` optional, must stay inside the workdir base; `timeout_s`
+  optional, 1..server max, can only shorten the `LR_TIMEOUT` ceiling),
   returns `{"stdout": "...", "stderr": "...", "exit_code": 0,
   "truncated": false, "duration_ms": 12}`.
   Exit code 124 means the command hit the server timeout.
@@ -102,7 +103,9 @@ Read this before running it:
 - Failed API-key attempts are rate limited per IP (temporary 429 bans),
   which blunts brute-force guessing.
 - As a typo guard, the server blocks obviously destructive commands
-  (`rm -rf /`, raw disk writes, `mkfs`, fork bombs, `reboot`, ...).
+  (`rm -rf /`, `rm -rf ~`, `rm -rf $HOME`, raw disk writes, `mkfs`,
+  fork bombs, `reboot`, ...). Only the home-dir root itself is blocked;
+  clearing a subdirectory like `rm -rf $HOME/cache` stays allowed.
   The phone app shows the block reason. Set `LR_ALLOW_DANGEROUS=1` on
   the server to turn this off.
 - Every command is audit-logged with timestamp, client IP, working dir,

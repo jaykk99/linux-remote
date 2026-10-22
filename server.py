@@ -215,6 +215,11 @@ _DANGEROUS_PATTERNS: list[tuple[str, str]] = [
     (r"\brm\s+.*-[a-zA-Z]*r[a-zA-Z]*f\b.*\s+/\s*(;|$|&&|\|\|)", "recursive delete rooted at /"),
     (r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+/(?:\s|;|$)", "recursive delete of /"),
     (r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+~/?(?:\s|;|$)", "recursive delete of home dir"),
+    # Same guard for the $HOME / ${HOME} spellings of the home dir
+    # (quoted or not). Only the home root itself is blocked; clearing a
+    # subdirectory like $HOME/cache stays allowed.
+    (r"""\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+["']?\$HOME["']?/?(?:\s|;|$)""", "recursive delete of home dir"),
+    (r"""\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+["']?\$\{HOME\}["']?/?(?:\s|;|$)""", "recursive delete of home dir"),
     (r"\bdd\b.*\bof=/dev/(sd|hd|vd|nvme|mmcblk)", "raw disk write via dd"),
     (r"\bmkfs(\.\w+)?\b", "filesystem format"),
     (r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:", "fork bomb"),
@@ -272,6 +277,10 @@ def resolve_workdir(cwd: Optional[str]) -> Path:
 class ExecRequest(BaseModel):
     command: str = Field(max_length=MAX_COMMAND_LEN)
     cwd: Optional[str] = Field(default=None, max_length=1024)
+    # Per-request timeout in seconds. Clamped to [1, COMMAND_TIMEOUT]:
+    # a request can only shorten the server's configured ceiling, never
+    # raise it.
+    timeout_s: Optional[int] = Field(default=None, ge=1)
 
 
 class ExecResponse(BaseModel):
@@ -500,9 +509,14 @@ def exec_command(
             "set LR_ALLOW_DANGEROUS=1 on the server to allow",
         )
     workdir = resolve_workdir(req.cwd)
+    timeout = (
+        COMMAND_TIMEOUT
+        if req.timeout_s is None
+        else min(req.timeout_s, COMMAND_TIMEOUT)
+    )
     started = time.monotonic()
     stdout, stderr, exit_code, truncated = run_command_capped(
-        command, workdir, COMMAND_TIMEOUT
+        command, workdir, timeout
     )
     duration_ms = int((time.monotonic() - started) * 1000)
     _log_command(command, exit_code, _client_ip(request), workdir, duration_ms)

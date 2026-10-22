@@ -155,6 +155,35 @@ def test_exec_output_truncation(client, monkeypatch):
     assert "truncated" in body["stdout"]
 
 
+def test_exec_timeout_override_shorter(client):
+    r = client.post(
+        "/exec", json={"command": "sleep 30", "timeout_s": 1}, headers=auth()
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["exit_code"] == 124
+    assert "timed out" in body["stderr"]
+
+
+def test_exec_timeout_override_cannot_exceed_server_max(client, monkeypatch):
+    monkeypatch.setattr(server, "COMMAND_TIMEOUT", 2)
+    started = time.time()
+    r = client.post(
+        "/exec", json={"command": "sleep 30", "timeout_s": 9999}, headers=auth()
+    )
+    elapsed = time.time() - started
+    assert r.status_code == 200
+    assert r.json()["exit_code"] == 124
+    assert elapsed < 15  # clamped to the 2s server ceiling, not 9999s
+
+
+def test_exec_timeout_override_rejects_zero(client):
+    r = client.post(
+        "/exec", json={"command": "echo hi", "timeout_s": 0}, headers=auth()
+    )
+    assert r.status_code == 422
+
+
 def test_exec_concurrent_streams_no_deadlock(client, monkeypatch):
     """A chatty stderr must not deadlock a chatty stdout."""
     monkeypatch.setattr(server, "MAX_OUTPUT_BYTES", 10_000_000)
@@ -217,6 +246,12 @@ def test_exec_cwd_not_a_dir(client):
         "sudo rm -rf /tmp/..;/bin/rm -rf /",
         "rm -rf ~",
         "rm -rf ~/",
+        "rm -rf $HOME",
+        "rm -rf $HOME/",
+        'rm -rf "$HOME"',
+        "rm -rf ${HOME}",
+        "rm -rf ${HOME}/",
+        "sudo rm -rf $HOME",
         "dd if=/dev/zero of=/dev/sda bs=1M",
         "mkfs.ext4 /dev/sda1",
         ":(){ :|:& };:",
@@ -238,6 +273,9 @@ def test_dangerous_blocked(client, command):
         "echo hello",
         "ls -la /tmp",
         "rm -rf /tmp/my-scratch-dir",
+        "rm -rf $HOME/cache",
+        "rm -rf ~/projects/scratch",
+        "echo $HOME",
         "rm /tmp/some-file",
         "df -h",
         "dd if=/dev/zero of=/tmp/test.img bs=1M count=1",
