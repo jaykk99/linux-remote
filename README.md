@@ -120,6 +120,19 @@ Read this before running it:
 - Each output card has a **Copy** button.
 - The status pill shows the server's hostname and re-checks every
   minute, so a dropped Tailscale link shows up on its own.
+- **Server profiles:** the Settings panel keeps a list of servers
+  (name + URL + API key + working dir). Add one per machine and switch
+  with the dropdown. Your old single-server settings migrate into a
+  "Default" profile automatically.
+- **Recent activity:** tap the &#8635; button in the top bar to browse
+  the server's audit log (newest first) and re-run any command with one
+  tap. Blocked destructive commands are shown in red and can't be
+  re-run from there.
+- **PIN lockout:** 8 wrong PINs in a row locks the unlock screen for
+  60 seconds.
+- Very long output is shortened for display (first 100k chars per
+  stream) so the phone stays smooth; the server still caps and marks
+  truncation separately.
 
 ## Live URL
 

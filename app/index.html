@@ -193,6 +193,14 @@
     0%, 100% { box-shadow: 0 0 0 0 rgba(52, 209, 123, 0.45); }
     50% { box-shadow: 0 0 0 6px rgba(52, 209, 123, 0); }
   }
+  #actbtn {
+    background: var(--surface); border: 1px solid var(--line-soft); border-radius: 13px;
+    color: var(--text2); font-size: 18px; width: 44px; height: 44px; min-height: 0;
+    padding: 0; cursor: pointer; flex-shrink: 0;
+    transition: all 0.15s ease;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #actbtn:active { transform: scale(0.9); color: var(--text); border-color: var(--line); }
   #gearbtn {
     background: var(--surface); border: 1px solid var(--line-soft); border-radius: 13px;
     color: var(--text2); font-size: 18px; width: 44px; height: 44px; min-height: 0;
@@ -210,7 +218,7 @@
     border-bottom-width: 0;
     transition: max-height 0.3s cubic-bezier(0.32, 0.72, 0, 1), padding 0.3s cubic-bezier(0.32, 0.72, 0, 1);
   }
-  #settings.open { max-height: 460px; padding-top: 14px; padding-bottom: 14px; border-bottom-width: 1px; }
+  #settings.open { max-height: 640px; padding-top: 14px; padding-bottom: 14px; border-bottom-width: 1px; }
   .fieldrow { display: flex; gap: 8px; }
   .fieldrow input {
     flex: 1; min-width: 0; background: var(--surface); border: 1px solid var(--line);
@@ -367,6 +375,61 @@
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* ---------- activity overlay ---------- */
+  #activity {
+    position: absolute; inset: 0; z-index: 30;
+    background: rgba(0, 0, 0, 0.96);
+    display: flex; flex-direction: column;
+    opacity: 0; visibility: hidden; pointer-events: none;
+    transition: opacity 0.25s ease, visibility 0.25s;
+    padding-top: calc(8px + env(safe-area-inset-top));
+  }
+  #activity.open { opacity: 1; visibility: visible; pointer-events: auto; }
+  #acthead {
+    flex-shrink: 0; display: flex; align-items: center;
+    justify-content: space-between; padding: 12px 18px;
+  }
+  #acthead .label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.4px; color: var(--text3);
+  }
+  #actlist {
+    flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    padding: 4px 16px calc(20px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .actcard {
+    background: var(--surface); border: 1px solid var(--line-soft);
+    border-radius: var(--radius-sm); padding: 12px 14px;
+  }
+  .actcard .acmd {
+    font-family: var(--mono); font-size: 12.5px; color: var(--text);
+    word-break: break-word; white-space: pre-wrap;
+  }
+  .actcard .acmd.blocked { color: var(--red); }
+  .actcard .ameta {
+    font-family: var(--sans); font-size: 11px; color: var(--text3);
+    margin-top: 8px; display: flex; justify-content: space-between;
+    align-items: center; gap: 8px;
+  }
+  .actcard .ameta .bad { color: var(--red); font-weight: 700; }
+  .actcard .ameta .good { color: var(--green); font-weight: 700; }
+  .arerun {
+    background: var(--accent-soft); border: 1px solid rgba(91, 155, 255, 0.3);
+    color: var(--accent); font-size: 12px; font-weight: 700;
+    padding: 7px 12px; min-height: 0; border-radius: 9px; flex-shrink: 0;
+  }
+  .arerun:disabled { opacity: 0.35; }
+  .arerun:active { transform: scale(0.94); }
+
+  /* ---------- profile picker ---------- */
+  .fieldrow select {
+    flex: 1; min-width: 0; background: var(--surface);
+    border: 1px solid var(--line); color: var(--text);
+    border-radius: var(--radius-sm); padding: 13px 14px; font-size: 14px;
+    font-family: var(--sans);
+  }
+
 </style>
 </head>
 <body>
@@ -411,10 +474,20 @@
       <h1>Linux Remote</h1>
     </div>
     <div id="status"><span class="dot"></span><span id="statustext">not tested</span></div>
+    <button id="actbtn" title="Recent activity" aria-label="Recent activity">&#8635;</button>
     <button id="gearbtn" title="Settings" aria-label="Settings">&#9881;</button>
   </div>
 
   <div id="settings">
+    <div class="fieldrow">
+      <select id="profile" aria-label="Server profile"></select>
+      <button id="addprofile" class="ghost" style="flex-shrink:0; min-height:0;" title="Add server profile" aria-label="Add server profile">+</button>
+      <button id="delprofile" class="ghost" style="flex-shrink:0; min-height:0;" title="Delete server profile" aria-label="Delete server profile">&minus;</button>
+    </div>
+    <div class="fieldrow">
+      <input id="pname" placeholder="Profile name, e.g. homelab"
+             autocomplete="off" autocapitalize="off" spellcheck="false">
+    </div>
     <div class="fieldrow">
       <input id="url" type="url" placeholder="Server URL, e.g. http://100.x.y.z:8000"
              autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -439,6 +512,14 @@
     <div class="btnrow">
       <button class="ghost" id="rotatebtn" style="flex:1;">Rotate API key</button>
     </div>
+  </div>
+
+  <div id="activity" aria-hidden="true">
+    <div id="acthead">
+      <span class="label">Recent activity</span>
+      <button id="actclose" class="ghost" style="min-height:0; padding:8px 14px;">Close</button>
+    </div>
+    <div id="actlist"></div>
   </div>
 
   <div id="outputwrap">
@@ -604,20 +685,53 @@ $("setupdone").onclick = () => {
     $("setupmsg").classList.add("err");
     return;
   }
-  localStorage.setItem("lr_url", url);
-  localStorage.setItem("lr_key", key);
+  if (!/^https?:\/\//i.test(url)) {
+    $("setupmsg").textContent = "URL must start with http:// or https://";
+    $("setupmsg").classList.add("err");
+    return;
+  }
+  // First server goes in as the default profile.
+  localStorage.setItem("lr_profiles", JSON.stringify([
+    { name: "Default", url, key, cwd: "" }
+  ]));
+  localStorage.setItem("lr_profile_idx", "0");
+  localStorage.removeItem("lr_url");
+  localStorage.removeItem("lr_key");
   enterApp();
 };
 
 // ---------- unlock ----------
+// Brute-force guard: 8 wrong PINs in a row locks the pad for 60 seconds.
+// A correct PIN resets the counter.
+const PIN_MAX_FAIL = 8, PIN_LOCK_MS = 60000;
 const lockPad = buildPinPad($("pinpad"), $("pindots"), 6, async pin => {
+  const now = Date.now();
+  const lockUntil = +(localStorage.getItem("lr_pin_lock") || 0);
+  if (now < lockUntil) {
+    $("lockmsg").textContent = "Too many wrong PINs. Wait " +
+      Math.ceil((lockUntil - now) / 1000) + "s.";
+    $("lockmsg").classList.add("err");
+    lockPad.reset();
+    lockPad.shake();
+    return;
+  }
   const h = await sha256hex(pin);
   if (h === localStorage.getItem("lr_pin")) {
+    localStorage.removeItem("lr_pin_fail");
+    localStorage.removeItem("lr_pin_lock");
     $("lockmsg").textContent = "Enter your PIN to unlock.";
     $("lockmsg").classList.remove("err");
     enterApp();
   } else {
-    $("lockmsg").textContent = "Wrong PIN. Try again.";
+    const fails = +(localStorage.getItem("lr_pin_fail") || 0) + 1;
+    if (fails >= PIN_MAX_FAIL) {
+      localStorage.setItem("lr_pin_lock", String(now + PIN_LOCK_MS));
+      localStorage.removeItem("lr_pin_fail");
+      $("lockmsg").textContent = "Too many wrong PINs. Locked for 60 seconds.";
+    } else {
+      localStorage.setItem("lr_pin_fail", String(fails));
+      $("lockmsg").textContent = "Wrong PIN. Try again.";
+    }
     $("lockmsg").classList.add("err");
     lockPad.reset();
     lockPad.shake();
@@ -633,21 +747,117 @@ const urlEl = $("url"), keyEl = $("apikey"), cmdEl = $("cmd"), cwdEl = $("cwd"),
       outEl = $("output"), hintEl = $("hint"),
       statusEl = $("status"), statusText = $("statustext");
 
+// ---------- server profiles ----------
+// Multiple machines, one app. Migrates the old single lr_url/lr_key/lr_cwd
+// keys into a "Default" profile on first run after the upgrade.
+let profiles = [];
+let activeProfile = 0;
+function loadProfiles() {
+  profiles = [];
+  activeProfile = 0;
+  try {
+    const saved = JSON.parse(localStorage.getItem("lr_profiles") || "null");
+    if (Array.isArray(saved) && saved.length) {
+      profiles = saved.filter(p => p && typeof p === "object")
+        .map(p => ({
+          name: String(p.name || "Server"),
+          url: String(p.url || ""),
+          key: String(p.key || ""),
+          cwd: String(p.cwd || "")
+        }));
+      activeProfile = Math.max(0, Math.min(
+        +(localStorage.getItem("lr_profile_idx") || 0), profiles.length - 1));
+      return;
+    }
+  } catch (e) {}
+  const url = localStorage.getItem("lr_url") || "";
+  const key = localStorage.getItem("lr_key") || "";
+  const cwd = localStorage.getItem("lr_cwd") || "";
+  profiles = [{ name: "Default", url, key, cwd }];
+  saveProfiles();
+}
+function saveProfiles() {
+  try {
+    localStorage.setItem("lr_profiles", JSON.stringify(profiles));
+    localStorage.setItem("lr_profile_idx", String(activeProfile));
+  } catch (e) {}
+}
+function cur() {
+  if (!profiles.length) profiles = [{ name: "Default", url: "", key: "", cwd: "" }];
+  activeProfile = Math.max(0, Math.min(activeProfile, profiles.length - 1));
+  return profiles[activeProfile];
+}
+function renderProfiles() {
+  const sel = $("profile");
+  sel.innerHTML = "";
+  profiles.forEach((p, i) => {
+    const o = document.createElement("option");
+    o.value = String(i);
+    o.textContent = p.name || ("Server " + (i + 1));
+    sel.appendChild(o);
+  });
+  sel.value = String(activeProfile);
+  const p = cur();
+  $("pname").value = p.name;
+  urlEl.value = p.url;
+  keyEl.value = p.key;
+  cwdEl.value = p.cwd;
+}
+$("profile").addEventListener("change", e => {
+  activeProfile = +e.target.value || 0;
+  saveProfiles();
+  renderProfiles();
+  setStatus("", "not tested");
+});
+$("addprofile").onclick = () => {
+  profiles.push({ name: "Server " + (profiles.length + 1), url: "", key: "", cwd: "" });
+  activeProfile = profiles.length - 1;
+  saveProfiles();
+  renderProfiles();
+  $("settings").classList.add("open");
+};
+$("delprofile").onclick = () => {
+  const p = cur();
+  if (profiles.length <= 1) {
+    profiles = [{ name: "Default", url: "", key: "", cwd: "" }];
+  } else {
+    if (!confirm("Delete profile \"" + p.name + "\"?")) return;
+    profiles.splice(activeProfile, 1);
+  }
+  activeProfile = 0;
+  saveProfiles();
+  renderProfiles();
+  setStatus("", "not tested");
+};
+
 function enterApp() {
   show("screen-app");
-  urlEl.value = localStorage.getItem("lr_url") || "";
-  keyEl.value = localStorage.getItem("lr_key") || "";
-  cwdEl.value = localStorage.getItem("lr_cwd") || "";
-  if (urlEl.value) testConnection();
+  loadProfiles();
+  renderProfiles();
+  if (baseUrl()) testConnection();
   cmdEl.focus();
 }
 
 $("gearbtn").onclick = () => $("settings").classList.toggle("open");
 $("lockbtn").onclick = () => { show("screen-lock"); lockPad.reset(); };
 
-urlEl.addEventListener("input", () => localStorage.setItem("lr_url", urlEl.value.trim()));
-keyEl.addEventListener("input", () => localStorage.setItem("lr_key", keyEl.value.trim()));
-cwdEl.addEventListener("input", () => localStorage.setItem("lr_cwd", cwdEl.value.trim()));
+function persistProfileField() {
+  const p = cur();
+  const newName = $("pname").value.trim();
+  if (newName && newName !== p.name) {
+    p.name = newName;
+    const opt = $("profile").options[activeProfile];
+    if (opt) opt.textContent = newName;
+  }
+  p.url = urlEl.value.trim();
+  p.key = keyEl.value.trim();
+  p.cwd = cwdEl.value.trim();
+  saveProfiles();
+}
+$("pname").addEventListener("input", persistProfileField);
+urlEl.addEventListener("input", persistProfileField);
+keyEl.addEventListener("input", persistProfileField);
+cwdEl.addEventListener("input", persistProfileField);
 
 function setStatus(state, text) {
   statusEl.className = state;
@@ -705,6 +915,83 @@ $("rotatebtn").onclick = async () => {
   }
 };
 
+// ---------- recent activity (server audit log) ----------
+$("actbtn").onclick = openActivity;
+$("actclose").onclick = () => $("activity").classList.remove("open");
+
+const ACT_RE = /^\[(.+?)\] ip=(\S+) cwd=(\S+) dur_ms=(\d+) exit=(\d+) cmd=(.*)$/;
+
+async function openActivity() {
+  const ov = $("activity");
+  ov.classList.add("open");
+  const list = $("actlist");
+  list.innerHTML = '<div class="hint" style="margin-top:24px;">Loading…</div>';
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) {
+    list.innerHTML = '<div class="hint" style="margin-top:24px;">Set the server URL and API key first.</div>';
+    return;
+  }
+  try {
+    const r = await fetch(base + "/recent?n=100", { headers: { "X-API-Key": key } });
+    if (!r.ok) {
+      list.innerHTML = '<div class="hint" style="margin-top:24px;">Failed: HTTP ' + r.status + '</div>';
+      return;
+    }
+    const lines = (await r.json()).lines || [];
+    if (!lines.length) {
+      list.innerHTML = '<div class="hint" style="margin-top:24px;">No commands logged yet.</div>';
+      return;
+    }
+    list.innerHTML = "";
+    lines.forEach(ln => list.appendChild(activityCard(ln)));
+  } catch (e) {
+    list.innerHTML = '<div class="hint" style="margin-top:24px;">Request failed.</div>';
+  }
+}
+
+function activityCard(line) {
+  const card = document.createElement("div");
+  card.className = "actcard";
+  const cmd = document.createElement("div");
+  cmd.className = "acmd";
+  const meta = document.createElement("div");
+  meta.className = "ameta";
+  const m = line.match(ACT_RE);
+  if (m) {
+    const ts = m[1], dur = m[4], exit = +m[5], rawCmd = m[6];
+    const blocked = rawCmd.indexOf("BLOCKED(") === 0;
+    const shown = rawCmd.replace(/\\n/g, "\n");
+    cmd.textContent = (blocked ? "" : "$ ") + shown;
+    if (blocked) cmd.classList.add("blocked");
+    const info = document.createElement("span");
+    info.textContent = ts.replace("T", " ") + " · " + dur + "ms · ";
+    const ex = document.createElement("b");
+    ex.textContent = "exit " + exit;
+    ex.className = exit === 0 ? "good" : "bad";
+    info.appendChild(ex);
+    const run = document.createElement("button");
+    run.type = "button";
+    run.className = "arerun";
+    run.textContent = "↻ Run";
+    run.title = "Run this command again";
+    if (blocked) {
+      run.disabled = true;
+    } else {
+      run.onclick = () => {
+        $("activity").classList.remove("open");
+        runCommand(shown);
+      };
+    }
+    meta.appendChild(info);
+    meta.appendChild(run);
+  } else {
+    cmd.textContent = line;
+  }
+  card.appendChild(cmd);
+  card.appendChild(meta);
+  return card;
+}
+
 function esc(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -729,6 +1016,15 @@ function fallbackCopy(text, done) {
   try { document.execCommand("copy"); done(); } catch (e) {}
   document.body.removeChild(ta);
 }
+// ---------- render cap ----------
+// A command can legally return up to 1MB per stream; dumping all of it
+// into the DOM makes the phone stutter. Show the first 100k chars and
+// say so. The server already caps at LR_MAX_OUTPUT_BYTES separately.
+const RENDER_CAP = 100000;
+function capText(s) {
+  if (s.length <= RENDER_CAP) return { text: s, capped: false };
+  return { text: s.slice(0, RENDER_CAP), capped: true };
+}
 function addEntry(command, stdout, stderr, exitCode, truncated) {
   const hint = $("hint");
   if (hint) hint.remove();
@@ -748,13 +1044,19 @@ function addEntry(command, stdout, stderr, exitCode, truncated) {
   div.appendChild(head);
   if (stdout) {
     const o = document.createElement("div");
-    o.className = "out"; o.textContent = stdout;
+    o.className = "out";
+    const cappedOut = capText(stdout);
+    o.textContent = cappedOut.text;
     div.appendChild(o);
+    if (cappedOut.capped) addDisplayCapNote(div);
   }
   if (stderr) {
     const e = document.createElement("div");
-    e.className = "err"; e.textContent = stderr;
+    e.className = "err";
+    const cappedErr = capText(stderr);
+    e.textContent = cappedErr.text;
     div.appendChild(e);
+    if (cappedErr.capped) addDisplayCapNote(div);
   }
   if (truncated) {
     const t = document.createElement("div");
@@ -769,6 +1071,13 @@ function addEntry(command, stdout, stderr, exitCode, truncated) {
   div.appendChild(code);
   outEl.appendChild(div);
   outEl.scrollTop = outEl.scrollHeight;
+}
+function addDisplayCapNote(div) {
+  if (div.querySelector(".trunc.displaycap")) return;
+  const t = document.createElement("div");
+  t.className = "trunc displaycap";
+  t.textContent = "Output shortened for display (first 100k chars shown).";
+  div.appendChild(t);
 }
 function addError(command, msg) {
   const hint = $("hint");

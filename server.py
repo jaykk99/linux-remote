@@ -45,7 +45,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 
 # ---------------------------------------------------------------------------
