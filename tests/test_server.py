@@ -374,6 +374,124 @@ def test_recent_empty_log(client):
 # key file handling
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -rf / --no-preserve-root",
+        "rm -rf /*",
+        "rm -rf / *",
+        "sudo rm -rf /",
+        "sudo rm -rf /* --no-preserve-root",
+        "sudo rm -rf /tmp/..; rm -rf /",
+        "rm -rf $HOME/*",
+        "rm -rf ~/*",
+        'rm -rf "$HOME"/*',
+        "rm -rf '$HOME'/*",
+        "rm -rf $HOME/..",
+        "rm -rf ~/../",
+        'rm -rf "$HOME"/..',
+        "rm -rf ${HOME}/..",
+        "sudo rm -rf $HOME/*",
+    ],
+)
+def test_dangerous_blocked_v13(client, command):
+    assert server.check_dangerous(command) is not None
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -rf /tmp/my-scratch-dir",
+        "rm -rf $HOME/cache",
+        "rm -rf ~/.cache/*",
+        "rm -rf ~/projects/scratch",
+        "rm -rf $HOME/.cache",
+        "ls /",
+        "df -h /",
+        "echo /",
+        "grep -r / /tmp/x",
+    ],
+)
+def test_benign_still_allowed_v13(client, command):
+    assert server.check_dangerous(command) is None
+
+
+# ---------------------------------------------------------------------------
+# stats
+# ---------------------------------------------------------------------------
+
+def test_stats_empty_log(client):
+    r = client.get("/stats", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_commands"] == 0
+    assert body["successful"] == 0
+    assert body["failed"] == 0
+    assert body["blocked"] == 0
+    assert body["success_rate"] is None
+    assert body["avg_duration_ms"] is None
+    assert body["top_commands"] == []
+    assert body["per_day"] == {}
+
+
+def test_stats_counts(client):
+    client.post("/exec", json={"command": "echo one"}, headers=auth())
+    client.post("/exec", json={"command": "echo two"}, headers=auth())
+    client.post("/exec", json={"command": "exit 7"}, headers=auth())
+    client.post("/exec", json={"command": "rm -rf /"}, headers=auth())  # 403
+    r = client.get("/stats", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_commands"] == 4
+    assert body["successful"] == 2
+    assert body["failed"] == 1
+    assert body["blocked"] == 1
+    assert body["success_rate"] == 0.5
+    assert body["avg_duration_ms"] is not None and body["avg_duration_ms"] >= 0
+    tops = {t["command"]: t["count"] for t in body["top_commands"]}
+    assert tops.get("echo") == 2
+    assert tops.get("exit") == 1
+    assert tops.get("rm") == 1
+    today = __import__("datetime").date.today().isoformat()
+    assert body["per_day"].get(today) == 4
+
+
+def test_stats_sudo_collapses_to_base_command():
+    lines = [
+        "[2026-10-23T07:00:00] ip=1.2.3.4 cwd=/x dur_ms=10 exit=0 cmd=sudo apt update",
+        "[2026-10-23T07:00:01] ip=1.2.3.4 cwd=/x dur_ms=10 exit=0 cmd=BLOCKED(recursive delete rooted at /): sudo rm -rf /",
+        "[2026-10-23T07:00:02] ip=1.2.3.4 cwd=/x dur_ms=10 exit=1 cmd=not-a-real-cmd",
+        "this line is garbage and must be skipped",
+    ]
+    s = server.compute_stats(lines)
+    assert s["total_commands"] == 3
+    assert s["successful"] == 1
+    assert s["failed"] == 1
+    assert s["blocked"] == 1
+    tops = {t["command"]: t["count"] for t in s["top_commands"]}
+    assert tops == {"apt": 1, "rm": 1, "not-a-real-cmd": 1}
+    assert s["avg_duration_ms"] == 10.0  # blocked line excluded from average
+
+
+def test_stats_requires_auth(client):
+    r = client.get("/stats", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_stats_limit_clamped(client):
+    for _ in range(3):
+        client.post("/exec", json={"command": "echo hi"}, headers=auth())
+    r = client.get("/stats?n=5000", headers=auth())  # clamped to 2000
+    assert r.status_code == 200
+    assert r.json()["total_commands"] == 3
+
+
+# ---------------------------------------------------------------------------
+# key file handling
+# ---------------------------------------------------------------------------
+
 def test_get_or_create_key_roundtrip(tmp_path, monkeypatch):
     data = tmp_path / "kd"
     monkeypatch.setattr(server, "DATA_DIR", data)

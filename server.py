@@ -45,7 +45,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 
 # ---------------------------------------------------------------------------
@@ -214,12 +214,28 @@ def require_key(request: Request, x_api_key: str = "") -> None:
 _DANGEROUS_PATTERNS: list[tuple[str, str]] = [
     (r"\brm\s+.*-[a-zA-Z]*r[a-zA-Z]*f\b.*\s+/\s*(;|$|&&|\|\|)", "recursive delete rooted at /"),
     (r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+/(?:\s|;|$)", "recursive delete of /"),
+    # Same guard with extra flags/args after the /, with sudo, and with a
+    # trailing glob: `rm -rf / --no-preserve-root`, `rm -rf /*`, `sudo rm -rf /`.
+    (
+        r"(sudo\s+)?\brm\b[^\n;|&]*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\b[^\n;|&]*\s+/\*?(?:\s|;|$)",
+        "recursive delete rooted at /",
+    ),
     (r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+~/?(?:\s|;|$)", "recursive delete of home dir"),
     # Same guard for the $HOME / ${HOME} spellings of the home dir
     # (quoted or not). Only the home root itself is blocked; clearing a
     # subdirectory like $HOME/cache stays allowed.
     (r"""\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+["']?\$HOME["']?/?(?:\s|;|$)""", "recursive delete of home dir"),
     (r"""\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+["']?\$\{HOME\}["']?/?(?:\s|;|$)""", "recursive delete of home dir"),
+    # Same guard for clearing the whole home tree via glob
+    # (`rm -rf $HOME/*`) or escaping to its parent (`rm -rf $HOME/..`).
+    (
+        r"""\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+["']?(\$HOME|\$\{HOME\}|~)["']?/\*+["']?(?:\s|;|$)""",
+        "recursive delete of home contents",
+    ),
+    (
+        r"""\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+["']?(\$HOME|\$\{HOME\}|~)["']?/\.\.(?:/|\s|;|$)""",
+        "recursive delete via parent of home dir",
+    ),
     (r"\bdd\b.*\bof=/dev/(sd|hd|vd|nvme|mmcblk)", "raw disk write via dd"),
     (r"\bmkfs(\.\w+)?\b", "filesystem format"),
     (r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:", "fork bomb"),
@@ -473,6 +489,76 @@ def _log_command(command: str, exit_code: int, ip: str, cwd: Path, duration_ms: 
 
 
 # ---------------------------------------------------------------------------
+# Activity stats (analytics over the audit log)
+# ---------------------------------------------------------------------------
+
+_STAT_RE = re.compile(
+    r"^\[(?P<ts>[^\]]+)\] ip=(?P<ip>\S+) cwd=(?P<cwd>\S+) "
+    r"dur_ms=(?P<dur>\d+) exit=(?P<exit>\d+) cmd=(?P<cmd>.*)$"
+)
+_BLOCKED_RE = re.compile(r"^BLOCKED\((?P<reason>[^)]*)\):\s*(?P<cmd>.*)$")
+
+
+def _base_command(cmd: str) -> str:
+    """First token of the command (sudo X -> X), for top-command stats."""
+    m = _BLOCKED_RE.match(cmd)
+    if m:
+        cmd = m.group("cmd")
+    parts = cmd.strip().split()
+    if not parts:
+        return "(empty)"
+    if parts[0] == "sudo" and len(parts) > 1:
+        return parts[1]
+    return parts[0]
+
+
+def compute_stats(lines: list[str]) -> dict:
+    """Aggregate activity stats from raw audit-log lines.
+
+    Malformed lines are skipped, never fatal: stats are best-effort.
+    """
+    total = 0
+    ok = 0
+    blocked = 0
+    dur_total = 0
+    dur_n = 0
+    base_counts: dict[str, int] = {}
+    day_counts: dict[str, int] = {}
+    for ln in lines:
+        m = _STAT_RE.match(ln.strip())
+        if not m:
+            continue
+        total += 1
+        exit_code = int(m.group("exit"))
+        dur = int(m.group("dur"))
+        cmd = m.group("cmd")
+        bm = _BLOCKED_RE.match(cmd)
+        if bm:
+            blocked += 1
+        elif exit_code == 0:
+            ok += 1
+        # Blocked commands never ran, so they carry no real duration.
+        if not bm:
+            dur_total += dur
+            dur_n += 1
+        base = _base_command(cmd)
+        base_counts[base] = base_counts.get(base, 0) + 1
+        day = m.group("ts")[:10]
+        day_counts[day] = day_counts.get(day, 0) + 1
+    top = sorted(base_counts.items(), key=lambda kv: (-kv[1], kv[0]))[:10]
+    return {
+        "total_commands": total,
+        "successful": ok,
+        "failed": total - ok - blocked,
+        "blocked": blocked,
+        "success_rate": round(ok / total, 3) if total else None,
+        "avg_duration_ms": round(dur_total / dur_n, 1) if dur_n else None,
+        "top_commands": [{"command": c, "count": n} for c, n in top],
+        "per_day": dict(sorted(day_counts.items())),
+    }
+
+
+# ---------------------------------------------------------------------------
 # API
 # ---------------------------------------------------------------------------
 
@@ -561,6 +647,18 @@ def recent(request: Request, x_api_key: str = Header(default=""), n: int = 50):
     with LOG_FILE.open() as f:
         lines = f.readlines()
     return {"lines": [ln.rstrip("\n") for ln in lines[-n:]][::-1]}
+
+
+@app.get("/stats")
+def stats(request: Request, x_api_key: str = Header(default=""), n: int = 500):
+    """Activity analytics over the last n audit-log lines. Auth required."""
+    require_key(request, x_api_key)
+    n = max(1, min(n, 2000))
+    if not LOG_FILE.exists():
+        return compute_stats([])
+    with LOG_FILE.open() as f:
+        lines = f.readlines()
+    return compute_stats(lines[-n:])
 
 
 if __name__ == "__main__":
