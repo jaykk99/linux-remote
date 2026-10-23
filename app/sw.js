@@ -1,5 +1,5 @@
 "use strict";
-const CACHE = "linux-remote-v4";
+const CACHE = "linux-remote-v5";
 const ASSETS = [
   "./",
   "./index.html",

@@ -368,6 +368,17 @@
   #send:active { transform: scale(0.88); }
   #send:disabled { opacity: 0.4; box-shadow: none; }
   #send svg { width: 20px; height: 20px; }
+  #timeout {
+    width: 60px; flex-shrink: 0; background: var(--surface); border: 1px solid var(--line);
+    color: var(--text3); border-radius: 22px; padding: 13px 0; font-size: 14px;
+    text-align: center; font-family: var(--mono);
+  }
+  #timeout::placeholder { color: var(--text3); }
+  #timeout:focus { outline: none; border-color: var(--accent); color: var(--text); }
+  #timeout::-webkit-outer-spin-button, #timeout::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0;
+  }
+  #timeout { -moz-appearance: textfield; appearance: textfield; }
   .spinner {
     display: inline-block; width: 18px; height: 18px; flex-shrink: 0;
     border: 2.5px solid rgba(255, 255, 255, 0.3); border-top-color: #fff;
@@ -397,6 +408,19 @@
     flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding: 4px 16px calc(20px + env(safe-area-inset-bottom));
     display: flex; flex-direction: column; gap: 10px;
+  }
+  #actstats {
+    flex-shrink: 0; display: flex; gap: 8px; overflow-x: auto;
+    padding: 2px 16px 12px; scrollbar-width: none;
+  }
+  #actstats::-webkit-scrollbar { display: none; }
+  .statcard {
+    flex: 1 0 auto; min-width: 88px; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px;
+  }
+  .statcard b { display: block; font-size: 15px; font-family: var(--mono); white-space: nowrap; }
+  .statcard span {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text3);
   }
   .actcard {
     background: var(--surface); border: 1px solid var(--line-soft);
@@ -512,6 +536,11 @@
     <div class="btnrow">
       <button class="ghost" id="rotatebtn" style="flex:1;">Rotate API key</button>
     </div>
+    <div class="btnrow">
+      <button class="ghost" id="expbtn" style="flex:1;">Export profiles</button>
+      <button class="ghost" id="impbtn" style="flex:1;">Import profiles</button>
+      <input type="file" id="impfile" accept="application/json,.json" style="display:none;" aria-hidden="true">
+    </div>
   </div>
 
   <div id="activity" aria-hidden="true">
@@ -519,6 +548,7 @@
       <span class="label">Recent activity</span>
       <button id="actclose" class="ghost" style="min-height:0; padding:8px 14px;">Close</button>
     </div>
+    <div id="actstats"></div>
     <div id="actlist"></div>
   </div>
 
@@ -540,6 +570,9 @@
   <div id="composer">
     <input id="cmd" type="text" placeholder="command..." autocomplete="off"
            autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="send">
+    <input id="timeout" type="number" min="1" inputmode="numeric" placeholder="&#9201;"
+           title="Per-command timeout in seconds (blank = server default)"
+           aria-label="Command timeout in seconds">
     <button id="send" aria-label="Run command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
   </div>
 </div>
@@ -915,15 +948,108 @@ $("rotatebtn").onclick = async () => {
   }
 };
 
+// ---------- profile export / import ----------
+// Exports all server profiles (name, url, key, cwd) as a JSON file so they
+// can be moved to another phone. The file holds the API keys in plain
+// text: keep it private, just like the keys themselves.
+$("expbtn").onclick = () => {
+  if (!profiles.length) { alert("No profiles to export."); return; }
+  const payload = {
+    app: "linux-remote", version: 1,
+    exported: new Date().toISOString(), profiles: profiles,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)],
+    { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "linux-remote-profiles.json";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+};
+$("impbtn").onclick = () => $("impfile").click();
+$("impfile").addEventListener("change", () => {
+  const f = $("impfile").files[0];
+  $("impfile").value = "";
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    let added = 0, updated = 0, skipped = 0;
+    try {
+      const data = JSON.parse(rd.result);
+      const list = Array.isArray(data) ? data : data.profiles;
+      if (!Array.isArray(list)) throw new Error("not a profiles file");
+      list.forEach(p => {
+        if (!p || typeof p !== "object") { skipped++; return; }
+        const name = String(p.name || "").trim();
+        const url = String(p.url || "").trim().replace(/\/+$/, "");
+        const key = String(p.key || "").trim();
+        const cwd = String(p.cwd || "").trim();
+        if (!name || !url || !key) { skipped++; return; }
+        const entry = { name, url, key, cwd };
+        const i = profiles.findIndex(x => x.name === name);
+        if (i >= 0) { profiles[i] = entry; updated++; }
+        else { profiles.push(entry); added++; }
+      });
+      if (added || updated) { saveProfiles(); renderProfiles(); }
+      alert("Import done: " + added + " added, " + updated + " updated" +
+        (skipped ? ", " + skipped + " skipped (invalid)" : "") + ".");
+    } catch (e) {
+      alert("Could not read that file: " + (e.message || e));
+    }
+  };
+  rd.onerror = () => alert("Could not read that file.");
+  rd.readAsText(f);
+});
+
 // ---------- recent activity (server audit log) ----------
 $("actbtn").onclick = openActivity;
 $("actclose").onclick = () => $("activity").classList.remove("open");
 
 const ACT_RE = /^\[(.+?)\] ip=(\S+) cwd=(\S+) dur_ms=(\d+) exit=(\d+) cmd=(.*)$/;
 
+function statCard(value, label) {
+  const d = document.createElement("div");
+  d.className = "statcard";
+  const b = document.createElement("b");
+  b.textContent = value;
+  const s = document.createElement("span");
+  s.textContent = label;
+  d.appendChild(b);
+  d.appendChild(s);
+  return d;
+}
+
+// Summary analytics strip at the top of the activity view.
+async function loadActStats() {
+  const box = $("actstats");
+  box.innerHTML = "";
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) return;
+  try {
+    const r = await fetch(base + "/stats?n=500", { headers: { "X-API-Key": key } });
+    if (!r.ok) return;
+    const s = await r.json();
+    if (!s || typeof s.total_commands !== "number") return;
+    const rate = s.success_rate == null ? "n/a" : Math.round(s.success_rate * 100) + "%";
+    const avg = s.avg_duration_ms == null ? "n/a" : Math.round(s.avg_duration_ms) + "ms";
+    const top = (s.top_commands && s.top_commands[0])
+      ? s.top_commands[0].command + " x" + s.top_commands[0].count : "n/a";
+    const day = new Date().toISOString().slice(0, 10);
+    const today = (s.per_day && s.per_day[day]) || 0;
+    box.appendChild(statCard(String(s.total_commands), "commands"));
+    box.appendChild(statCard(String(today), "today"));
+    box.appendChild(statCard(rate, "success"));
+    box.appendChild(statCard(avg, "avg time"));
+    box.appendChild(statCard(String(s.blocked), "blocked"));
+    box.appendChild(statCard(top, "top cmd"));
+  } catch (e) { /* stats are best-effort; the list below still loads */ }
+}
+
 async function openActivity() {
   const ov = $("activity");
   ov.classList.add("open");
+  loadActStats();
   const list = $("actlist");
   list.innerHTML = '<div class="hint" style="margin-top:24px;">Loading…</div>';
   const base = baseUrl(), key = keyEl.value.trim();
@@ -1161,25 +1287,42 @@ async function runCommand(forceCmd) {
   const origLabel = sendBtn.innerHTML;
   sendBtn.disabled = true;
   sendBtn.innerHTML = '<span class="spinner"></span>';
+  // Optional per-command timeout (seconds); blank = server default. The
+  // server clamps it to its configured ceiling, so this can only shorten.
+  let timeoutS = null;
+  const tv = $("timeout").value.trim();
+  if (tv) {
+    const n = parseInt(tv, 10);
+    if (Number.isFinite(n) && n >= 1) timeoutS = n;
+  }
   try {
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 300000);
     const r = await fetch(base + "/exec", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-API-Key": key },
-      body: JSON.stringify({ command, cwd: cwdEl.value.trim() || null }),
+      body: JSON.stringify({
+        command, cwd: cwdEl.value.trim() || null, timeout_s: timeoutS
+      }),
       signal: ctrl.signal
     });
     clearTimeout(t);
-    if (r.status === 401) { addError(command, "Bad API key (401)."); setStatus("bad", "bad key"); return; }
-    if (r.status === 403) {
-      let detail = "Blocked by the server.";
-      try { detail = (await r.json()).detail || detail; } catch (e) {}
-      addError(command, detail);
+    if (!r.ok) {
+      // Surface the server's own reason when it gives one (403 block
+      // reason, 413 body limit, 429 lockout), so the message says what
+      // actually happened instead of a generic code.
+      let detail = null;
+      try { detail = (await r.json()).detail || null; } catch (e) {}
+      if (r.status === 401) { setStatus("bad", "bad key"); }
+      addError(command, detail || ({
+        400: "Bad request (400).",
+        401: "Bad API key (401).",
+        403: "Blocked by the server (403).",
+        413: "Command too large for the server to accept (413).",
+        429: "Too many failed attempts, locked out for a while (429).",
+      }[r.status] || ("Server error: HTTP " + r.status)));
       return;
     }
-    if (r.status === 429) { addError(command, "Too many failed attempts — try again later."); return; }
-    if (!r.ok) { addError(command, "Server error: HTTP " + r.status); return; }
     const data = await r.json();
     addEntry(command, data.stdout || "", data.stderr || "", data.exit_code, !!data.truncated);
     setStatus("ok", "connected");

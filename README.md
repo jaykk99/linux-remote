@@ -73,6 +73,10 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   app right away.
 - `GET /recent?n=50` - header `X-API-Key: <key>`. Last `n` audit-log
   lines, newest first.
+- `GET /stats?n=500` - header `X-API-Key: <key>`. Analytics over the last
+  `n` audit-log lines (max 2000): total/successful/failed/blocked counts,
+  success rate, average duration, top commands, per-day counts. The phone
+  app shows these as a summary strip in the activity view.
 
 ## Configuration (env vars)
 
