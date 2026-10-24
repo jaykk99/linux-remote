@@ -21,6 +21,8 @@ Env:
                             denylist (default off)
     LR_LOG_MAX_BYTES        rotate commands.log past this size (default 5MB)
     LR_WORKDIR              base dir commands may run in (default: $HOME)
+    LR_MAX_CONCURRENT       max simultaneous /exec commands (default 8);
+                            further commands get 503 while all slots are busy
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +70,10 @@ RATE_LIMIT = _env_int("LR_RATE_LIMIT", 10)
 RATE_WINDOW = _env_int("LR_RATE_WINDOW", 300)
 ALLOW_DANGEROUS = os.environ.get("LR_ALLOW_DANGEROUS", "") == "1"
 LOG_MAX_BYTES = _env_int("LR_LOG_MAX_BYTES", 5 * 1_048_576)
+MAX_CONCURRENT = _env_int("LR_MAX_CONCURRENT", 8)
+# One slot per in-flight /exec. Tests may replace this semaphore to force
+# the busy path; the endpoint only ever uses the module-level object.
+_exec_sem = threading.Semaphore(max(1, MAX_CONCURRENT))
 BASE_DIR = Path(os.environ.get("LR_WORKDIR", str(Path.home()))).expanduser()
 
 DATA_DIR = Path.home() / ".linux-remote"
@@ -252,13 +258,163 @@ _DANGEROUS_PATTERNS: list[tuple[str, str]] = [
 _DANGEROUS_RES = [(re.compile(p, re.IGNORECASE), label) for p, label in _DANGEROUS_PATTERNS]
 
 
-def check_dangerous(command: str) -> Optional[str]:
-    """Return a human-readable block reason, or None if allowed."""
+# ---------------------------------------------------------------------------
+# Denylist helpers for cases regexes express badly (v1.4.0)
+# ---------------------------------------------------------------------------
+# These scan per shell segment (split on ; && || |). Over-splitting only
+# blocks more, never less: a dangerous command hidden behind a separator
+# is still caught in its own segment.
+
+_TOKEN_RE = re.compile(r'"[^"]*"|\'[^\']*\'|[^\s"\']+')
+
+
+def _segments(command: str) -> list[str]:
+    return re.split(r"(?:&&|\|\||[;|])", command)
+
+
+def _tokens(text: str) -> list[str]:
+    """Split a segment into tokens, stripping surrounding quotes."""
+    out = []
+    for tok in _TOKEN_RE.findall(text):
+        if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
+            tok = tok[1:-1]
+        out.append(tok)
+    return out
+
+
+def _cmd_rest(segment: str, word: str) -> Optional[str]:
+    """Text after the first whole-word `word` in a segment, or None."""
+    m = re.search(r"\b" + word + r"\b(.*)$", segment)
+    return m.group(1) if m else None
+
+
+def _rm_parent_traversal(command: str) -> Optional[str]:
+    """Block `rm -rf` at a parent-dir target: `..`, `/tmp/..`, `foo/../..`.
+
+    A named sibling (`rm -rf ../build`) stays allowed: it names exactly
+    what goes, while an unnamed parent, a glob in the parent, or a path
+    that climbs through `..` can wipe far more than intended.
+    """
+    for seg in _segments(command):
+        rest = _cmd_rest(seg, "rm")
+        if rest is None:
+            continue
+        toks = _tokens(rest)
+        flags = [t for t in toks if t.startswith("-") and t != "-"]
+        letters = "".join(t[1:] for t in flags if not t.startswith("--"))
+        if "r" not in letters or "f" not in letters:
+            continue
+        for target in [t for t in toks if not t.startswith("-")]:
+            if target in ("..", "../"):
+                return "recursive delete via parent dir"
+            if target.startswith("../") and ("*" in target[3:] or target[3:] == ""):
+                return "recursive delete via parent dir"
+            if "/../" in target or target.endswith("/.."):
+                return "recursive delete via parent traversal"
+    return None
+
+
+def _find_delete(command: str) -> Optional[str]:
+    """Block `find <root-ish path> -delete` (or `-exec rm` on it)."""
+    for seg in _segments(command):
+        rest = _cmd_rest(seg, "find")
+        if rest is None:
+            continue
+        toks = _tokens(rest)
+        has_delete = "-delete" in toks or (
+            "-exec" in toks and "rm" in toks[toks.index("-exec"):]
+        )
+        if not has_delete:
+            continue
+        # Valid find syntax puts the path first; no path means ".".
+        # Same line as rm: a named target (../build) stays allowed, while
+        # an unnamed parent, a parent glob, or a .. traversal is blocked.
+        path = next((t for t in toks if not t.startswith("-")), ".")
+        if path in ("/", "~", "$HOME", "${HOME}", "..", "../"):
+            return "recursive delete via find on root path"
+        if path.startswith("../") and "*" in path[3:]:
+            return "recursive delete via find on root path"
+        if "/../" in path or path.endswith("/.."):
+            return "recursive delete via find on root path"
+    return None
+
+
+def _recursive_perms(command: str) -> Optional[str]:
+    """Block recursive chmod/chown rooted at / or home (bricks perms)."""
+    for seg in _segments(command):
+        for word in ("chmod", "chown"):
+            rest = _cmd_rest(seg, word)
+            if rest is None:
+                continue
+            toks = _tokens(rest)
+            recursive = any(
+                t == "--recursive" or (t.startswith("-") and not t.startswith("--") and "R" in t[1:])
+                for t in toks
+            )
+            if not recursive:
+                continue
+            # chmod/chown take mode/owner first, then targets.
+            targets = [t for t in toks if not t.startswith("-")][1:]
+            for target in targets:
+                # rstrip("/") alone would turn "/" into "" — keep root.
+                norm = target.rstrip("/") or "/"
+                if norm in ("/", "~", "$HOME", "${HOME}", "/*", "~/*", "$HOME/*", "${HOME}/*"):
+                    return f"recursive {word} on root path"
+    return None
+
+
+def _wipe_at_workdir_root(command: str) -> Optional[str]:
+    """Block wipe-everything targets when cwd IS the workdir base.
+
+    `rm -rf *` in a subdirectory clears that directory (allowed); the
+    same command with cwd = $HOME wipes home, so it is blocked there.
+    """
+    for seg in _segments(command):
+        rest = _cmd_rest(seg, "rm")
+        if rest is not None:
+            toks = _tokens(rest)
+            flags = [t for t in toks if t.startswith("-") and t != "-"]
+            letters = "".join(t[1:] for t in flags if not t.startswith("--"))
+            if "r" in letters and "f" in letters:
+                for target in [t for t in toks if not t.startswith("-")]:
+                    if target in ("*", ".*", ".", "./", "./*"):
+                        return "recursive delete of workdir contents"
+        rest = _cmd_rest(seg, "find")
+        if rest is not None:
+            toks = _tokens(rest)
+            if "-delete" in toks:
+                path = next((t for t in toks if not t.startswith("-")), ".")
+                if path == ".":
+                    return "recursive delete of workdir contents"
+    return None
+
+
+def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
+    """Return a human-readable block reason, or None if allowed.
+
+    `cwd` is the already-resolved workdir for the request. When it is
+    the workdir base itself, wipe-everything targets (`rm -rf *`,
+    `find . -delete`) are blocked too; in a subdirectory they stay
+    allowed. Pass no cwd to skip only that workdir-root rule.
+    """
     if ALLOW_DANGEROUS:
         return None
     for rx, label in _DANGEROUS_RES:
         if rx.search(command):
             return label
+    for helper in (_rm_parent_traversal, _find_delete, _recursive_perms):
+        label = helper(command)
+        if label:
+            return label
+    if cwd is not None:
+        try:
+            at_base = Path(cwd).resolve() == BASE_DIR.resolve()
+        except OSError:
+            at_base = False
+        if at_base:
+            label = _wipe_at_workdir_root(command)
+            if label:
+                return label
     return None
 
 
@@ -570,6 +726,7 @@ def health():
         "version": VERSION,
         "host": socket.gethostname(),
         "uptime_s": int(time.time() - STARTED_AT),
+        "max_concurrent": MAX_CONCURRENT,
     }
 
 
@@ -583,27 +740,39 @@ def exec_command(
     command = (req.command or "").strip()
     if not command:
         raise HTTPException(status_code=400, detail="empty command")
-    blocked = check_dangerous(command)
+    # Resolve first: the denylist's workdir-root rule needs the real cwd,
+    # and a cwd escaping the base is rejected before any command runs.
+    workdir = resolve_workdir(req.cwd)
+    blocked = check_dangerous(command, cwd=workdir)
     if blocked:
         _log_command(
             f"BLOCKED({blocked}): {command}", 403, _client_ip(request),
-            BASE_DIR.resolve(), 0,
+            workdir, 0,
         )
         raise HTTPException(
             status_code=403,
             detail=f"blocked destructive command ({blocked}); "
             "set LR_ALLOW_DANGEROUS=1 on the server to allow",
         )
-    workdir = resolve_workdir(req.cwd)
     timeout = (
         COMMAND_TIMEOUT
         if req.timeout_s is None
         else min(req.timeout_s, COMMAND_TIMEOUT)
     )
+    # Bound concurrent shells: a phone app firing many long commands must
+    # not fork-bomb the server. Full slots get 503, never a queue.
+    if not _exec_sem.acquire(blocking=False):
+        raise HTTPException(
+            status_code=503,
+            detail="server busy; too many concurrent commands",
+        )
     started = time.monotonic()
-    stdout, stderr, exit_code, truncated = run_command_capped(
-        command, workdir, timeout
-    )
+    try:
+        stdout, stderr, exit_code, truncated = run_command_capped(
+            command, workdir, timeout
+        )
+    finally:
+        _exec_sem.release()
     duration_ms = int((time.monotonic() - started) * 1000)
     _log_command(command, exit_code, _client_ip(request), workdir, duration_ms)
     return ExecResponse(

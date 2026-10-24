@@ -502,3 +502,120 @@ def test_get_or_create_key_roundtrip(tmp_path, monkeypatch):
     assert is_new2 is False and key2 == key1
     assert oct((data / "key").stat().st_mode & 0o777) == "0o600"
     assert oct(data.stat().st_mode & 0o777) == "0o700"
+
+
+# ---------------------------------------------------------------------------
+# v1.4.0: parent-traversal deletes, find -delete, recursive perms,
+# workdir-root wipes, and the /exec concurrency cap
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Parent-dir deletes (v1.3.0 let all of these through).
+        "rm -rf ..",
+        "rm -rf ../",
+        "rm -rf ../*",
+        "rm -rf /tmp/..",
+        "rm -rf foo/../..",
+        "sudo rm -rf ..",
+        'rm -rf ".."',
+        # find -delete on a root-ish path.
+        "find / -delete",
+        "find / -type f -delete",
+        "find ~ -delete",
+        "find $HOME -delete",
+        "find ${HOME} -delete",
+        "find .. -delete",
+        "find / -exec rm {} +",
+        "sudo find / -delete",
+        # Recursive permission wipes on a root path.
+        "chmod -R 000 /",
+        "chmod --recursive 000 /",
+        "chown -R root /",
+        "sudo chmod -R 755 ~",
+        "chmod -R 000 $HOME",
+        "chmod -R 000 /*",
+    ],
+)
+def test_dangerous_blocked_v14(client, command):
+    assert server.check_dangerous(command) is not None
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Named targets stay allowed, even one step up or under a root path.
+        "rm -rf ../build",
+        "rm -rf /tmp/my-scratch-dir",
+        "rm -rf $HOME/cache",
+        "find /tmp -delete",
+        "find ../build -delete",
+        # Non-recursive perms, or recursive perms on a subdir, stay allowed.
+        "chmod 755 /tmp/file",
+        "chmod -R 755 /tmp/mydir",
+        "chown -R user:group /tmp/mydir",
+        # rm without both -r and -f is not a wipe.
+        "rm ..",
+        "rm -f /tmp/file",
+    ],
+)
+def test_benign_still_allowed_v14(client, command):
+    assert server.check_dangerous(command) is None
+
+
+def test_workdir_root_wipe_blocked_at_base(client, tmp_home):
+    # Default cwd IS the workdir base: `rm -rf *` there would wipe home.
+    assert server.check_dangerous("rm -rf *", cwd=tmp_home / "work") is not None
+    assert server.check_dangerous("find . -delete", cwd=tmp_home / "work") is not None
+    r = client.post("/exec", json={"command": "rm -rf *"}, headers=auth())
+    assert r.status_code == 403
+    # And the base dir itself survived the blocked attempt.
+    assert (tmp_home / "work").is_dir()
+
+
+def test_workdir_root_wipe_allowed_in_subdir(client, tmp_home):
+    sub = tmp_home / "work" / "scratch"
+    sub.mkdir()
+    (sub / "junk.txt").write_text("junk")
+    # In a subdirectory, `rm -rf *` clears just that directory.
+    assert server.check_dangerous("rm -rf *", cwd=sub) is None
+    r = client.post(
+        "/exec", json={"command": "rm -rf *", "cwd": "scratch"}, headers=auth()
+    )
+    assert r.status_code == 200
+    assert not (sub / "junk.txt").exists()
+
+
+def test_exec_concurrency_cap(client, monkeypatch):
+    import threading
+
+    monkeypatch.setattr(server, "_exec_sem", threading.Semaphore(0))
+    r = client.post("/exec", json={"command": "echo hi"}, headers=auth())
+    assert r.status_code == 503
+    # Freeing a slot lets commands through again.
+    monkeypatch.setattr(server, "_exec_sem", threading.Semaphore(1))
+    r = client.post("/exec", json={"command": "echo hi"}, headers=auth())
+    assert r.status_code == 200
+
+
+def test_exec_busy_slot_released_after_command(client, monkeypatch):
+    import threading
+
+    sem = threading.Semaphore(1)
+    monkeypatch.setattr(server, "_exec_sem", sem)
+    r = client.post("/exec", json={"command": "echo hi"}, headers=auth())
+    assert r.status_code == 200
+    # The slot was released: a second command still fits.
+    r = client.post("/exec", json={"command": "echo again"}, headers=auth())
+    assert r.status_code == 200
+
+
+def test_health_reports_max_concurrent(client, monkeypatch):
+    monkeypatch.setattr(server, "MAX_CONCURRENT", 4)
+    r = client.get("/health")
+    assert r.status_code == 200
+    assert r.json()["max_concurrent"] == 4
+    assert r.json()["version"] == "1.4.0"

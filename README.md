@@ -94,6 +94,8 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   (default 5MB)
 - `LR_WORKDIR` - base dir commands may run in (default `$HOME`);
   the `cwd` field in `/exec` must resolve inside it
+- `LR_MAX_CONCURRENT` - max simultaneous `/exec` commands (default 8);
+  extra commands get 503 while all slots are busy
 
 ## Security
 
@@ -108,8 +110,13 @@ Read this before running it:
   which blunts brute-force guessing.
 - As a typo guard, the server blocks obviously destructive commands
   (`rm -rf /`, `rm -rf ~`, `rm -rf $HOME`, raw disk writes, `mkfs`,
-  fork bombs, `reboot`, ...). Only the home-dir root itself is blocked;
-  clearing a subdirectory like `rm -rf $HOME/cache` stays allowed.
+  fork bombs, `reboot`, ...). Also blocked: parent-dir deletes
+  (`rm -rf ..`, `rm -rf /tmp/..`, `find / -delete`) and recursive
+  permission wipes (`chmod -R 000 /`). Only the home-dir root itself is
+  blocked; clearing a subdirectory like `rm -rf $HOME/cache` stays
+  allowed, as does deleting one named sibling (`rm -rf ../build`).
+  With cwd at the workdir base, wipe-everything targets (`rm -rf *`,
+  `find . -delete`) are blocked too; in a subdirectory they stay allowed.
   The phone app shows the block reason. Set `LR_ALLOW_DANGEROUS=1` on
   the server to turn this off.
 - Every command is audit-logged with timestamp, client IP, working dir,
