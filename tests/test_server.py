@@ -618,4 +618,48 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.4.0"
+    assert r.json()["version"] == "1.5.0"
+
+
+# ---------------------------------------------------------------------------
+# v1.5.0: absolute-path spellings of the workdir base (and its parent)
+# ---------------------------------------------------------------------------
+# v1.4.0 blocked `rm -rf ~` / `rm -rf $HOME` but let the identical wipe
+# through as the absolute path: `rm -rf /home/jay`, `chmod -R 000
+# /home/jay`, `find /home/jay -delete`, and the parent dir /home itself.
+
+def test_absolute_base_path_wipes_blocked(client, tmp_home):
+    work = str(tmp_home / "work")
+    parent = str(tmp_home)
+    for command in [
+        f"rm -rf {work}",
+        f"rm -rf {work}/",
+        f"rm -rf {work}/*",
+        f"sudo rm -rf {work}",
+        f"rm -rf {parent}",
+        f"rm -rf {parent}/*",
+        f"find {work} -delete",
+        f"find {parent} -delete",
+        f"chmod -R 000 {work}",
+        f"chown -R root {parent}",
+        "rm -rf ~root",
+        "rm -rf ~otheruser",
+    ]:
+        assert server.check_dangerous(command) is not None, command
+        r = client.post("/exec", json={"command": command}, headers=auth())
+        assert r.status_code == 403, command
+    # Nothing above executed: the base dir and its parent survived.
+    assert (tmp_home / "work").is_dir()
+    assert tmp_home.is_dir()
+
+
+def test_absolute_subdir_still_allowed(client, tmp_home):
+    work = str(tmp_home / "work")
+    for command in [
+        f"rm -rf {work}/cache",
+        f"rm -rf {work}/projects/scratch",
+        f"find {work}/tmp -delete",
+        f"chmod -R 755 {work}/mydir",
+        f"chown -R user:group {work}/mydir",
+    ]:
+        assert server.check_dangerous(command) is None, command

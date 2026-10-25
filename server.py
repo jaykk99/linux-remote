@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 
 # ---------------------------------------------------------------------------
@@ -259,13 +259,64 @@ _DANGEROUS_RES = [(re.compile(p, re.IGNORECASE), label) for p, label in _DANGERO
 
 
 # ---------------------------------------------------------------------------
-# Denylist helpers for cases regexes express badly (v1.4.0)
+# Denylist helpers for cases regexes express badly (v1.4.0, extended v1.5.0)
 # ---------------------------------------------------------------------------
 # These scan per shell segment (split on ; && || |). Over-splitting only
 # blocks more, never less: a dangerous command hidden behind a separator
 # is still caught in its own segment.
 
 _TOKEN_RE = re.compile(r'"[^"]*"|\'[^\']*\'|[^\s"\']+')
+
+
+def _base_dir() -> Path:
+    """Resolved workdir base (tests monkeypatch BASE_DIR)."""
+    try:
+        return Path(BASE_DIR).resolve()
+    except OSError:
+        return Path(BASE_DIR)
+
+
+def _expand_home_spelling(target: str) -> str:
+    """Expand a leading ~ / $HOME / ${HOME} spelling to an absolute path.
+
+    Relative targets pass through unchanged.
+    """
+    base = str(_base_dir())
+    if target == "~" or target.startswith("~/"):
+        return base + target[1:]
+    if target == "$HOME" or target.startswith("$HOME/"):
+        return base + target[5:]
+    if target == "${HOME}" or target.startswith("${HOME}/"):
+        return base + target[7:]
+    return target
+
+
+def _is_wipe_root_target(target: str) -> bool:
+    """True if target names the workdir base, its parent, or their whole
+    contents — by absolute path, not just a ~/$HOME spelling.
+
+    v1.4.0 blocked `rm -rf ~` and `rm -rf $HOME` but let the exact same
+    wipe through as `rm -rf /home/jay` (the absolute path of the base),
+    `rm -rf /home` (its parent), or either with a `/*` contents glob.
+    A named subdirectory (`/home/jay/cache`) still stays allowed: it
+    names exactly what goes, same as the existing named-target policy.
+    A bare `~name` spelling (another user's whole home) is also a wipe.
+    """
+    if target.startswith("~") and target != "~" and not target.startswith("~/"):
+        # ~name with no slash: another user's whole home dir. A subdir
+        # under it (~name/projects) is a named target and stays allowed.
+        if "/" not in target[1:]:
+            return True
+        return False
+    expanded = _expand_home_spelling(target)
+    if not expanded.startswith("/"):
+        return False
+    base = str(_base_dir())
+    parent = str(_base_dir().parent)
+    glob = expanded.endswith("/*")
+    stem = expanded[:-2] if glob else expanded
+    norm = os.path.normpath(stem)
+    return norm in (base, parent)
 
 
 def _segments(command: str) -> list[str]:
@@ -305,6 +356,8 @@ def _rm_parent_traversal(command: str) -> Optional[str]:
         if "r" not in letters or "f" not in letters:
             continue
         for target in [t for t in toks if not t.startswith("-")]:
+            if _is_wipe_root_target(target):
+                return "recursive delete of workdir base (absolute path)"
             if target in ("..", "../"):
                 return "recursive delete via parent dir"
             if target.startswith("../") and ("*" in target[3:] or target[3:] == ""):
@@ -330,6 +383,8 @@ def _find_delete(command: str) -> Optional[str]:
         # Same line as rm: a named target (../build) stays allowed, while
         # an unnamed parent, a parent glob, or a .. traversal is blocked.
         path = next((t for t in toks if not t.startswith("-")), ".")
+        if _is_wipe_root_target(path):
+            return "recursive delete via find on workdir base (absolute path)"
         if path in ("/", "~", "$HOME", "${HOME}", "..", "../"):
             return "recursive delete via find on root path"
         if path.startswith("../") and "*" in path[3:]:
@@ -356,6 +411,8 @@ def _recursive_perms(command: str) -> Optional[str]:
             # chmod/chown take mode/owner first, then targets.
             targets = [t for t in toks if not t.startswith("-")][1:]
             for target in targets:
+                if _is_wipe_root_target(target):
+                    return f"recursive {word} on workdir base (absolute path)"
                 # rstrip("/") alone would turn "/" into "" — keep root.
                 norm = target.rstrip("/") or "/"
                 if norm in ("/", "~", "$HOME", "${HOME}", "/*", "~/*", "$HOME/*", "${HOME}/*"):
