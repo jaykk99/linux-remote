@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +259,8 @@ _DANGEROUS_RES = [(re.compile(p, re.IGNORECASE), label) for p, label in _DANGERO
 
 
 # ---------------------------------------------------------------------------
-# Denylist helpers for cases regexes express badly (v1.4.0, extended v1.5.0)
+# Denylist helpers for cases regexes express badly (v1.4.0, extended
+# v1.5.0, root spellings v1.6.0)
 # ---------------------------------------------------------------------------
 # These scan per shell segment (split on ; && || |). Over-splitting only
 # blocks more, never less: a dangerous command hidden behind a separator
@@ -301,6 +302,10 @@ def _is_wipe_root_target(target: str) -> bool:
     A named subdirectory (`/home/jay/cache`) still stays allowed: it
     names exactly what goes, same as the existing named-target policy.
     A bare `~name` spelling (another user's whole home) is also a wipe.
+    v1.6.0 adds the filesystem root itself, however spelled: v1.5.0 let
+    `rm -rf /.`, `rm -rf //`, `find /. -delete`, and `chmod -R 000 /.`
+    through because normpath never produced the base or parent paths
+    for them (and find/chmod have no rm-style root guard of their own).
     """
     if target.startswith("~") and target != "~" and not target.startswith("~/"):
         # ~name with no slash: another user's whole home dir. A subdir
@@ -316,7 +321,12 @@ def _is_wipe_root_target(target: str) -> bool:
     glob = expanded.endswith("/*")
     stem = expanded[:-2] if glob else expanded
     norm = os.path.normpath(stem)
-    return norm in (base, parent)
+    # Root, however spelled: normpath keeps a leading "//" (POSIX
+    # leaves it implementation-defined) and turns the empty stem of a
+    # bare "/*" glob into ".", so collapse both to "/".
+    if norm == "//" or (glob and stem == ""):
+        norm = "/"
+    return norm in (base, parent, "/")
 
 
 def _segments(command: str) -> list[str]:

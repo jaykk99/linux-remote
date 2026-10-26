@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.5.0"
+    assert r.json()["version"] == "1.6.0"
 
 
 # ---------------------------------------------------------------------------
@@ -663,3 +663,58 @@ def test_absolute_subdir_still_allowed(client, tmp_home):
         f"chown -R user:group {work}/mydir",
     ]:
         assert server.check_dangerous(command) is None, command
+
+
+# ---------------------------------------------------------------------------
+# v1.6.0: filesystem-root spellings of the wipe root
+# ---------------------------------------------------------------------------
+# v1.5.0 compared targets only against the workdir base and its parent,
+# so root spelled as `/.`, `//`, `/./`, or a root contents glob slipped
+# through every helper (rm, find -delete, and recursive chmod/chown —
+# and find/chmod have no rm-style root guard of their own).
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # rm spellings of root.
+        "rm -rf /.",
+        "rm -rf //",
+        "rm -rf ///",
+        "rm -rf /./",
+        "rm -rf /./*",
+        "rm -rf //*",
+        "sudo rm -rf /.",
+        # find -delete spellings of root.
+        "find /. -delete",
+        "find // -delete",
+        "find /./ -delete",
+        "find /* -delete",
+        "sudo find /. -delete",
+        # Recursive perms spellings of root.
+        "chmod -R 000 /.",
+        "chmod -R 000 /..",
+        "chmod -R 000 /./",
+        "chown -R root /.",
+        "sudo chmod -R 000 /.",
+    ],
+)
+def test_dangerous_blocked_v16(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Named targets under root stay allowed, as before.
+        "rm -rf /tmp/my-scratch-dir",
+        "find /tmp -delete",
+        "chmod -R 755 /tmp/mydir",
+        "chown -R user:group /tmp/mydir",
+        "ls /",
+        "df -h /",
+    ],
+)
+def test_benign_still_allowed_v16(client, command):
+    assert server.check_dangerous(command) is None, command
