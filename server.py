@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 
 
 # ---------------------------------------------------------------------------
@@ -260,13 +260,11 @@ _DANGEROUS_RES = [(re.compile(p, re.IGNORECASE), label) for p, label in _DANGERO
 
 # ---------------------------------------------------------------------------
 # Denylist helpers for cases regexes express badly (v1.4.0, extended
-# v1.5.0, root spellings v1.6.0)
+# v1.5.0, root spellings v1.6.0, shell-word spellings v1.7.0)
 # ---------------------------------------------------------------------------
 # These scan per shell segment (split on ; && || |). Over-splitting only
 # blocks more, never less: a dangerous command hidden behind a separator
 # is still caught in its own segment.
-
-_TOKEN_RE = re.compile(r'"[^"]*"|\'[^\']*\'|[^\s"\']+')
 
 
 def _base_dir() -> Path:
@@ -333,14 +331,211 @@ def _segments(command: str) -> list[str]:
     return re.split(r"(?:&&|\|\||[;|])", command)
 
 
+def _decode_ansi_c(body: str) -> str:
+    """Decode the body of a bash $'...' ANSI-C-quoted string.
+
+    Covers the spellings that turn into a wipe root: \\x2f and \\057
+    both become "/", \\x2e becomes ".", so $'\\x2f', $'\\057',
+    $'\\x2f\\x2f' and $'\\x2e\\x2e' decode to "/", "//" and "..".
+    Unknown escapes collapse to the escaped char itself (\\/ -> "/",
+    \\. -> "."), matching bash. Control escapes (\\n, \\t, \\a, \\e,
+    \\xHH, \\ooo, \\uHHHH, \\UHHHHHHHH, \\cX) are decoded for
+    completeness; they cannot spell a wipe root on their own.
+    """
+    out: list[str] = []
+    i = 0
+    simple = {
+        "a": "\x07", "b": "\x08", "e": "\x1b", "E": "\x1b",
+        "f": "\x0c", "n": "\n", "r": "\r", "t": "\t", "v": "\x0b",
+        "\\": "\\", "'": "'", '"': '"', "?": "?",
+    }
+    while i < len(body):
+        ch = body[i]
+        if ch != "\\" or i + 1 >= len(body):
+            out.append(ch)
+            i += 1
+            continue
+        esc = body[i + 1]
+        if esc in simple:
+            out.append(simple[esc])
+            i += 2
+        elif esc == "x":
+            j = i + 2
+            hexdigits = ""
+            while j < len(body) and len(hexdigits) < 2 and body[j] in "0123456789abcdefABCDEF":
+                hexdigits += body[j]
+                j += 1
+            if hexdigits:
+                out.append(chr(int(hexdigits, 16)))
+                i = j
+            else:
+                out.append("x")
+                i += 2
+        elif esc in ("u", "U"):
+            width = 4 if esc == "u" else 8
+            j = i + 2
+            hexdigits = ""
+            while j < len(body) and len(hexdigits) < width and body[j] in "0123456789abcdefABCDEF":
+                hexdigits += body[j]
+                j += 1
+            if hexdigits:
+                try:
+                    out.append(chr(int(hexdigits, 16)))
+                except ValueError:
+                    pass
+                i = j
+            else:
+                out.append(esc)
+                i += 2
+        elif esc in "01234567":
+            j = i + 1
+            octdigits = ""
+            while j < len(body) and len(octdigits) < 3 and body[j] in "01234567":
+                octdigits += body[j]
+                j += 1
+            out.append(chr(int(octdigits, 8) & 0xFF))
+            i = j
+        elif esc == "c" and i + 2 < len(body):
+            out.append(chr(ord(body[i + 2].upper()) & 0x1F))
+            i += 3
+        else:
+            # Unknown escape: bash keeps the escaped char (\/ -> /).
+            out.append(esc)
+            i += 2
+    return "".join(out)
+
+
+def _decode_double_quoted(body: str) -> str:
+    """Decode a bash "..." string: backslash is special only before
+    $, `, ", \\ and newline; before anything else (e.g. "/") the
+    backslash is kept, so "/\\/" inside double quotes stays a literal
+    backslash-slash filename and is NOT a wipe root.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\" and i + 1 < len(body) and body[i + 1] in '$`"\\\n':
+            if body[i + 1] != "\n":
+                out.append(body[i + 1])
+            i += 2
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 def _tokens(text: str) -> list[str]:
-    """Split a segment into tokens, stripping surrounding quotes."""
-    out = []
-    for tok in _TOKEN_RE.findall(text):
-        if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
-            tok = tok[1:-1]
-        out.append(tok)
+    """Split a segment into shell words, joining adjacent fragments.
+
+    The old regex tokenizer split $'/' into "$" and "/" and kept
+    /$'' as "/" + "$''", so a wipe root spelled with ANSI-C hex
+    ($'\\x2f'), an escaped slash (\\/), or a concatenated empty
+    fragment (/$'', $HOME$'') never survived as one target: rm
+    happened to catch some forms by scanning every fragment, but
+    find (which checks only the first path token) and chmod missed
+    them outright. Joining fragments the way the shell does — single
+    quotes literal, double quotes decoded, $'...' ANSI-C decoded,
+    $"..." as double quotes, backslash escaping the next char
+    outside quotes — makes $'\\x2f', \\/, /$'' and $HOME$'' all
+    decode to the same "/" / "$HOME" the shell would pass to rm,
+    while named targets ($HOME/ca''che -> $HOME/cache) stay allowed.
+    A standalone empty quote still yields one empty token; callers
+    skip empty targets so it can never masquerade as "/".
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        while i < n and text[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        chars: list[str] = []
+        while i < n and not text[i].isspace():
+            ch = text[i]
+            if ch == "'":
+                j = text.find("'", i + 1)
+                if j == -1:
+                    chars.append(text[i + 1:])
+                    i = n
+                else:
+                    chars.append(text[i + 1:j])
+                    i = j + 1
+            elif ch == '"':
+                j = i + 1
+                raw: list[str] = []
+                closed = False
+                while j < n:
+                    if text[j] == "\\" and j + 1 < n:
+                        raw.append(text[j:j + 2])
+                        j += 2
+                    elif text[j] == '"':
+                        closed = True
+                        break
+                    else:
+                        raw.append(text[j])
+                        j += 1
+                chars.append(_decode_double_quoted("".join(raw)))
+                i = j + 1 if closed else n
+            elif ch == "\\":
+                if i + 1 < n:
+                    chars.append(text[i + 1])
+                    i += 2
+                else:
+                    chars.append("\\")
+                    i += 1
+            elif ch == "$" and i + 1 < n and text[i + 1] == "'":
+                j = i + 2
+                raw = []
+                closed = False
+                while j < n:
+                    if text[j] == "\\" and j + 1 < n:
+                        raw.append(text[j:j + 2])
+                        j += 2
+                    elif text[j] == "'":
+                        closed = True
+                        break
+                    else:
+                        raw.append(text[j])
+                        j += 1
+                chars.append(_decode_ansi_c("".join(raw)))
+                i = j + 1 if closed else n
+            elif ch == "$" and i + 1 < n and text[i + 1] == '"':
+                j = i + 2
+                raw = []
+                closed = False
+                while j < n:
+                    if text[j] == "\\" and j + 1 < n:
+                        raw.append(text[j:j + 2])
+                        j += 2
+                    elif text[j] == '"':
+                        closed = True
+                        break
+                    else:
+                        raw.append(text[j])
+                        j += 1
+                chars.append(_decode_double_quoted("".join(raw)))
+                i = j + 1 if closed else n
+            else:
+                chars.append(ch)
+                i += 1
+        out.append("".join(chars))
     return out
+
+
+def _rm_has_rf(flags: list[str]) -> bool:
+    """True if rm flags include both recursive and force, in any
+    spelling: combined short flags (-rf), separate short flags
+    (-r -f), or long flags (--recursive --force), mixed freely.
+    The old code only read short-flag letters, so
+    `rm --recursive --force /` slipped past the helper checks.
+    """
+    short = "".join(t[1:] for t in flags if t.startswith("-") and not t.startswith("--"))
+    longs = [t[2:] for t in flags if t.startswith("--")]
+    has_r = "r" in short or "recursive" in longs
+    has_f = "f" in short or "force" in longs
+    return has_r and has_f
 
 
 def _cmd_rest(segment: str, word: str) -> Optional[str]:
@@ -362,10 +557,9 @@ def _rm_parent_traversal(command: str) -> Optional[str]:
             continue
         toks = _tokens(rest)
         flags = [t for t in toks if t.startswith("-") and t != "-"]
-        letters = "".join(t[1:] for t in flags if not t.startswith("--"))
-        if "r" not in letters or "f" not in letters:
+        if not _rm_has_rf(flags):
             continue
-        for target in [t for t in toks if not t.startswith("-")]:
+        for target in [t for t in toks if not t.startswith("-") and t]:
             if _is_wipe_root_target(target):
                 return "recursive delete of workdir base (absolute path)"
             if target in ("..", "../"):
@@ -392,7 +586,8 @@ def _find_delete(command: str) -> Optional[str]:
         # Valid find syntax puts the path first; no path means ".".
         # Same line as rm: a named target (../build) stays allowed, while
         # an unnamed parent, a parent glob, or a .. traversal is blocked.
-        path = next((t for t in toks if not t.startswith("-")), ".")
+        # Empty tokens (a standalone '' quote) are skipped, not paths.
+        path = next((t for t in toks if not t.startswith("-") and t), ".")
         if _is_wipe_root_target(path):
             return "recursive delete via find on workdir base (absolute path)"
         if path in ("/", "~", "$HOME", "${HOME}", "..", "../"):
@@ -419,7 +614,9 @@ def _recursive_perms(command: str) -> Optional[str]:
             if not recursive:
                 continue
             # chmod/chown take mode/owner first, then targets.
-            targets = [t for t in toks if not t.startswith("-")][1:]
+            # Empty tokens are skipped: rstrip("/") would otherwise
+            # turn "" into "/" and block a harmless quoted-empty arg.
+            targets = [t for t in toks if not t.startswith("-") and t][1:]
             for target in targets:
                 if _is_wipe_root_target(target):
                     return f"recursive {word} on workdir base (absolute path)"
@@ -441,16 +638,15 @@ def _wipe_at_workdir_root(command: str) -> Optional[str]:
         if rest is not None:
             toks = _tokens(rest)
             flags = [t for t in toks if t.startswith("-") and t != "-"]
-            letters = "".join(t[1:] for t in flags if not t.startswith("--"))
-            if "r" in letters and "f" in letters:
-                for target in [t for t in toks if not t.startswith("-")]:
+            if _rm_has_rf(flags):
+                for target in [t for t in toks if not t.startswith("-") and t]:
                     if target in ("*", ".*", ".", "./", "./*"):
                         return "recursive delete of workdir contents"
         rest = _cmd_rest(seg, "find")
         if rest is not None:
             toks = _tokens(rest)
             if "-delete" in toks:
-                path = next((t for t in toks if not t.startswith("-")), ".")
+                path = next((t for t in toks if not t.startswith("-") and t), ".")
                 if path == ".":
                     return "recursive delete of workdir contents"
     return None

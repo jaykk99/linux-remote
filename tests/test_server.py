@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.6.0"
+    assert r.json()["version"] == "1.7.0"
 
 
 # ---------------------------------------------------------------------------
@@ -717,4 +717,96 @@ def test_dangerous_blocked_v16(client, command):
     ],
 )
 def test_benign_still_allowed_v16(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# ---------------------------------------------------------------------------
+# v1.7.0: shell-word spellings of the wipe root
+# ---------------------------------------------------------------------------
+# v1.6.0 tokenized $'/' into "$" + "/" and /$'' into "/" + "$''", so
+# a wipe root spelled with ANSI-C hex/octal escapes, a backslash, or
+# a concatenated empty fragment slipped past: rm caught some forms
+# only because it scans every fragment, while find (first path token
+# only) and chmod missed them outright. The shell-word tokenizer
+# decodes $'\x2f' / $'\057' / \/ / /$'' / $HOME$'' back to the "/"
+# / "$HOME" the shell would actually pass, so all three commands
+# block them. Long flags (--recursive --force) are covered too: the
+# old helper only read short-flag letters.
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # ANSI-C quoting: plain, hex, octal, doubled, dotted, glob.
+        "rm -rf $'/'",
+        "rm -rf $'\\x2f'",
+        "rm -rf $'\\057'",
+        "rm -rf $'\\x2f\\x2f'",
+        "rm -rf $'\\x2f.'",
+        "rm -rf $'\\x2f'*",
+        # Backslash-escaped spellings.
+        "rm -rf \\/",
+        "rm -rf \\/\\/",
+        "rm -rf \\/.",
+        # Concatenated spellings (empty fragments).
+        "rm -rf /$''",
+        "rm -rf /$''*",
+        "rm -rf $HOME$''",
+        "rm -rf ''$HOME",
+        # ANSI-C / escaped parent-dir spellings.
+        "rm -rf $'\\x2e\\x2e'",
+        "rm -rf \\.\\.",
+        "rm -rf /tmp/$'..'",
+        # Long-flag spellings of rm -rf.
+        "rm --recursive --force /",
+        "rm --recursive --force $'\\x2f'",
+        "rm -r --force /",
+        # find -delete on a shell-word root.
+        "find $'/' -delete",
+        "find $'\\x2f' -delete",
+        "find \\/ -delete",
+        "find /$'' -delete",
+        "find $HOME$'' -delete",
+        # Recursive perms on a shell-word root.
+        "chmod -R 000 \\/",
+        "chmod -R 000 $'\\x2f'",
+        "chmod -R 000 $'\\x2f.'",
+        "chmod -R 000 $HOME$''",
+        "chown -R root $'\\x2f'",
+    ],
+)
+def test_dangerous_blocked_v17(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+def test_workdir_root_wipe_quoted_glob_blocked_at_base(client, tmp_home):
+    # $'*' and $'\x2a' both expand to "*" in the shell, so at the
+    # workdir base they wipe home just like a bare `rm -rf *`.
+    assert server.check_dangerous("rm -rf $'*'", cwd=tmp_home / "work") is not None
+    assert server.check_dangerous("rm -rf $'\\x2a'", cwd=tmp_home / "work") is not None
+    r = client.post("/exec", json={"command": "rm -rf $'*'"}, headers=auth())
+    assert r.status_code == 403
+    assert (tmp_home / "work").is_dir()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Named targets stay allowed, however they are quoted.
+        "rm -rf /tmp/my-scratch-dir",
+        "rm -rf $HOME/ca''che",
+        "rm -rf /tmp/$'cache'",
+        "rm -rf $'../build'",
+        "rm --recursive --force /tmp/mydir",
+        "find $HOME/cache -delete",
+        "find /tmp -delete",
+        # A concatenated empty fragment in a named target is not a
+        # wipe: previously chmod blocked this as a false positive
+        # (the empty fragment token normalized to "/").
+        "chmod -R 755 $HOME/ca''che",
+        "chmod -R 755 /tmp/mydir",
+    ],
+)
+def test_benign_still_allowed_v17(client, command):
     assert server.check_dangerous(command) is None, command
