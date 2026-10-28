@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.7.0"
+    assert r.json()["version"] == "1.8.0"
 
 
 # ---------------------------------------------------------------------------
@@ -809,4 +809,91 @@ def test_workdir_root_wipe_quoted_glob_blocked_at_base(client, tmp_home):
     ],
 )
 def test_benign_still_allowed_v17(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# ---------------------------------------------------------------------------
+# v1.8.0: fragmented command names
+# ---------------------------------------------------------------------------
+# The task's literal example ($'rm' -rf /) was ALREADY blocked upstream
+# (\brm\b matches inside the quotes), but the adjacent gap was wide
+# open: a command name split by a backslash escape or quote
+# concatenation (`r\m`, `r"m"`, `"r"m`, `r''m`) never contained the
+# plain command word, so every regex and every `_cmd_rest` helper
+# missed it — for rm, mkfs, dd, shutdown, chmod and find alike, and
+# behind sudo/wrappers too. The fix decodes each segment's command
+# word and re-runs the checks on that one rewritten word. Bonus fix
+# in the same pass: bare `shred /dev/sda` (no flags) slipped past
+# the old shred pattern, which needed two whitespace runs.
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Backslash-escaped / quote-split command names, rm.
+        "r\\m -rf /",
+        'r"m" -rf /',
+        '"r"m -rf /',
+        "r''m -rf /",
+        "''rm -rf /",
+        "$'r\\m' -rf /",
+        # Already-blocked plain-quoted forms stay blocked (regression).
+        "$'rm' -rf /",
+        "'rm' -rf /",
+        '"rm" -rf /',
+        # Fragmented rm behind wrappers and flags.
+        "sudo r\\m -rf /",
+        "sudo -u root r\\m -rf /",
+        "sudo -n r\\m -rf /",
+        "sudo sudo r\\m -rf /",
+        "env r\\m -rf /",
+        "env -i r\\m -rf /",
+        "env FOO=bar r\\m -rf /",
+        "FOO=bar r\\m -rf /",
+        "command r\\m -rf /",
+        "/bin/r\\m -rf /",
+        # Fragmented rm, other wipe spellings.
+        "r\\m --recursive --force /",
+        "r\\m -rf /tmp/..",
+        "r\\m -rf $HOME",
+        "r\\m -rf / --no-preserve-root",
+        # Fragmented names for the other dangerous commands.
+        "m\\kfs.ext4 /dev/sda",
+        "d\\d if=/dev/zero of=/dev/sda",
+        "shutdow\\n -h now",
+        "chmo\\d -R 000 /",
+        "fin\\d / -delete",
+        "shre\\d /dev/sda",
+        # Fragmented rm after a separator.
+        "ls /tmp; r\\m -rf /",
+        'echo ok && r"m" -rf /',
+        # Bare shred on a device (old pattern needed a flag).
+        "shred /dev/sda",
+        "shred -v /dev/sda",
+    ],
+)
+def test_dangerous_blocked_v18(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Fragmented command, named target: still allowed, as before.
+        "r\\m -rf /tmp/build",
+        'r"m" -rf ./build',
+        "r\\m -rf ../build",
+        "sudo -n r\\m -rf /tmp/build",
+        # A fragmented name that is only looked up, never run.
+        "command -v r\\m",
+        # Shredding a regular file stays allowed.
+        "shred secret.txt",
+        "shred /tmp/notes.txt",
+        # Quoted echo of a fragmented wipe string is not a wipe:
+        # normalization only rewrites the command word (echo).
+        'echo "r\\m -rf /"',
+    ],
+)
+def test_benign_still_allowed_v18(client, command):
     assert server.check_dangerous(command) is None, command

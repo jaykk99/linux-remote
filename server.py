@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 
 
 # ---------------------------------------------------------------------------
@@ -253,14 +253,19 @@ _DANGEROUS_PATTERNS: list[tuple[str, str]] = [
         "system power control",
     ),
     (r">\s*/dev/(sd|hd|vd|nvme|mmcblk)", "raw disk write via redirect"),
-    (r"\bwipefs\b|\bshred\b\s+.*\s+/dev/", "disk wipe utility on device"),
+    # v1.8.0: the old shred pattern needed TWO whitespace runs
+    # (`\s+.*\s+/dev/`), so a bare `shred /dev/sda` with no flags
+    # slipped through. One whitespace run before /dev/ is enough;
+    # shredding a regular file (`shred secret.txt`) stays allowed.
+    (r"\bwipefs\b|\bshred\b[^\n;|&]*\s/dev/", "disk wipe utility on device"),
 ]
 _DANGEROUS_RES = [(re.compile(p, re.IGNORECASE), label) for p, label in _DANGEROUS_PATTERNS]
 
 
 # ---------------------------------------------------------------------------
 # Denylist helpers for cases regexes express badly (v1.4.0, extended
-# v1.5.0, root spellings v1.6.0, shell-word spellings v1.7.0)
+# v1.5.0, root spellings v1.6.0, shell-word spellings v1.7.0,
+# fragmented command names v1.8.0)
 # ---------------------------------------------------------------------------
 # These scan per shell segment (split on ; && || |). Over-splitting only
 # blocks more, never less: a dangerous command hidden behind a separator
@@ -652,16 +657,148 @@ def _wipe_at_workdir_root(command: str) -> Optional[str]:
     return None
 
 
-def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
-    """Return a human-readable block reason, or None if allowed.
+# ---------------------------------------------------------------------------
+# v1.8.0: fragmented command names
+# ---------------------------------------------------------------------------
+# v1.7.0 decoded quoted TARGETS, but the COMMAND NAME itself was still
+# matched as raw text: `\brm\b` needs the letters r and m adjacent, so
+# a backslash-escaped or quote-split spelling (`r\m`, `r"m"`, `"r"m`,
+# `r''m`) sailed past every regex and every `_cmd_rest` helper, for
+# every dangerous command (rm, mkfs, dd, shutdown, chmod, find) —
+# including behind `sudo`. The shell runs all of those as the plain
+# command, so the denylist must too. Fix: decode each segment's
+# command word (skipping wrappers, leading assignments, and sudo/nice
+# flags) and re-run the checks on the command with that one word
+# spliced back in decoded form. Only the command word is rewritten —
+# arguments stay byte-identical, so a quoted argument can never gain
+# (or lose) a block from this pass, and a plain command word is a
+# no-op. The raw check always runs first, so this pass can only add
+# blocks, never remove one. Known limit, not covered here: a command
+# hidden inside a substitution (`$(r\m -rf /)`, backticks) or a
+# subshell still needs its own recursive scan.
 
-    `cwd` is the already-resolved workdir for the request. When it is
-    the workdir base itself, wipe-everything targets (`rm -rf *`,
-    `find . -delete`) are blocked too; in a subdirectory they stay
-    allowed. Pass no cwd to skip only that workdir-root rule.
+_WRAPPER_WORDS = {"sudo", "command", "builtin", "env", "time", "nice"}
+_VALUE_FLAGS = {
+    "sudo": {"-u", "-g", "-h", "-p", "-t", "-C"},
+    "nice": {"-n"},
+    "env": {"-u", "-C", "-S"},
+}
+_ASSIGN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _word_end(text: str, i: int) -> int:
+    """End index of the shell word starting at `i` (quote-aware).
+
+    Mirrors the fragment rules of `_tokens` without decoding: single
+    quotes are literal, double / $' / $" quotes close at the next
+    unescaped quote, and a backslash outside quotes escapes the next
+    char. An unterminated quote runs to the end of the string.
     """
-    if ALLOW_DANGEROUS:
-        return None
+    n = len(text)
+    while i < n and not text[i].isspace():
+        ch = text[i]
+        if ch == "'":
+            j = text.find("'", i + 1)
+            i = n if j == -1 else j + 1
+        elif ch == '"':
+            j = i + 1
+            while j < n:
+                if text[j] == "\\" and j + 1 < n:
+                    j += 2
+                elif text[j] == '"':
+                    break
+                else:
+                    j += 1
+            i = n if j >= n else j + 1
+        elif ch == "$" and i + 1 < n and text[i + 1] in "'\"":
+            quote = text[i + 1]
+            j = i + 2
+            while j < n:
+                if text[j] == "\\" and j + 1 < n:
+                    j += 2
+                elif text[j] == quote:
+                    break
+                else:
+                    j += 1
+            i = n if j >= n else j + 1
+        elif ch == "\\":
+            i += 2 if i + 1 < n else 1
+        else:
+            i += 1
+    return i
+
+
+def _normalize_segment(segment: str) -> str:
+    """Segment with its command word spliced back in decoded form.
+
+    Skips leading wrappers (`sudo`, `command`, `builtin`, `env`,
+    `time`, `nice` — chained, so `sudo sudo cmd` works), leading
+    `VAR=value` assignments (and `env` / `sudo` VAR=value args), and
+    wrapper flag words (consuming the value word after a
+    value-taking flag, e.g. `sudo -u root`, `env -u NAME`). The
+    first remaining word is the command word; if decoding it changes
+    it (`r\\m` -> `rm`, `r"m"` -> `rm`, `''rm` -> `rm`), splice the
+    decoded form in. A plain command word returns the segment
+    unchanged. Only the first word is ever touched.
+    """
+    i = 0
+    n = len(segment)
+    wrapper: Optional[str] = None
+    flags_phase = False
+    while True:
+        while i < n and segment[i].isspace():
+            i += 1
+        if i >= n:
+            return segment
+        end = _word_end(segment, i)
+        raw = segment[i:end]
+        toks = _tokens(raw)
+        decoded = toks[0] if toks else ""
+        if decoded in _WRAPPER_WORDS:
+            # Wrappers chain (`sudo sudo cmd`, `env FOO=bar cmd`):
+            # every leading wrapper is skipped, not just the first.
+            wrapper = decoded
+            flags_phase = wrapper in _VALUE_FLAGS or wrapper in ("command", "time", "builtin")
+            i = end
+            continue
+        if _ASSIGN_RE.match(decoded) and (wrapper is None or wrapper in ("env", "sudo")):
+            i = end
+            continue
+        if flags_phase:
+            if decoded == "--":
+                flags_phase = False
+                i = end
+                continue
+            if decoded.startswith("-") and decoded != "-":
+                i = end
+                value_flag = decoded in _VALUE_FLAGS.get(wrapper or "", set())
+                if value_flag:
+                    while i < n and segment[i].isspace():
+                        i += 1
+                    if i < n:
+                        i = _word_end(segment, i)
+                continue
+            flags_phase = False
+            # Fall through: this word is the command word.
+        if decoded and decoded != raw:
+            return segment[:i] + decoded + segment[end:]
+        return segment
+
+
+def _normalize_command(command: str) -> str:
+    """Command with every segment's command word decoded (v1.8.0).
+
+    Splits on the same separators as `_segments` (separators kept, so
+    rejoining is exact); each segment is normalized independently.
+    """
+    parts = re.split(r"(&&|\|\||[;|])", command)
+    return "".join(
+        _normalize_segment(p) if idx % 2 == 0 else p for idx, p in enumerate(parts)
+    )
+
+
+def _check_dangerous_once(command: str, cwd: Optional[Path] = None) -> Optional[str]:
+    """One pass of the denylist over `command` (raw or normalized)."""
     for rx, label in _DANGEROUS_RES:
         if rx.search(command):
             return label
@@ -678,6 +815,30 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
             label = _wipe_at_workdir_root(command)
             if label:
                 return label
+    return None
+
+
+def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
+    """Return a human-readable block reason, or None if allowed.
+
+    `cwd` is the already-resolved workdir for the request. When it is
+    the workdir base itself, wipe-everything targets (`rm -rf *`,
+    `find . -delete`) are blocked too; in a subdirectory they stay
+    allowed. Pass no cwd to skip only that workdir-root rule.
+
+    Two passes: the raw command first, then (v1.8.0) the same checks
+    on the command with each segment's command word decoded, so a
+    fragmented command name (`r\\m -rf /`) is caught exactly like
+    the plain spelling. The second pass can only add blocks.
+    """
+    if ALLOW_DANGEROUS:
+        return None
+    label = _check_dangerous_once(command, cwd)
+    if label:
+        return label
+    normalized = _normalize_command(command)
+    if normalized != command:
+        return _check_dangerous_once(normalized, cwd)
     return None
 
 
