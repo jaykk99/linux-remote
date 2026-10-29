@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.8.0"
+    assert r.json()["version"] == "1.9.0"
 
 
 # ---------------------------------------------------------------------------
@@ -896,4 +896,70 @@ def test_dangerous_blocked_v18(client, command):
     ],
 )
 def test_benign_still_allowed_v18(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # v1.9.0: dangerous commands hidden in substitutions, subshells,
+        # and process substitutions — all slipped through before, because
+        # the closing ) / ` is not a terminator any regex or helper
+        # accepts. The shell executes all of these, so all are blocked.
+        "echo $(rm -rf /)",
+        "`rm -rf /`",
+        "(rm -rf /)",
+        "true && (rm -rf /)",
+        "echo x | (rm -rf /)",
+        'echo "$(rm -rf /)"',
+        # Fragmented command name inside a substitution.
+        "echo $(r\\m -rf /)",
+        # Nested inside parameter expansion, arithmetic, array
+        # assignment, and double-nested substitutions (bash executes
+        # the substitution in each of these positions).
+        "echo ${x:-$(rm -rf /)}",
+        "echo $(( $(rm -rf /) + 1 ))",
+        "arr=(x $(rm -rf /) y)",
+        "echo $(echo $(rm -rf /))",
+        # Process substitution and time + subshell.
+        "echo <(rm -rf /)",
+        "time (rm -rf /)",
+        # Other denylisted commands, not just rm.
+        "echo $(find / -delete)",
+        "echo $(chmod -R 000 /)",
+        "echo $(shutdown -h now)",
+        "echo $(rm -rf /) && echo done",
+    ],
+)
+def test_dangerous_blocked_v19(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # v1.9.0: quoting still respected — a substitution inside
+        # single quotes is literal text, never executed.
+        "echo '$(rm -rf /)'",
+        # Quoted parens are patterns, not subshells.
+        "grep -E '(a|b)' file",
+        # Function definitions, case patterns, arrays, arithmetic,
+        # and benign substitutions are not commands and stay allowed.
+        "foo() { echo hi; }",
+        "case $x in (a) echo hi;; esac",
+        "arr=(a b c)",
+        "echo $((1 + 2))",
+        "echo $(echo hi)",
+        "echo `echo hi`",
+        "echo \"date: $(date)\"",
+        "x=$(echo hi)",
+        "echo ${x:-default}",
+        "echo $(echo $(date))",
+        # Named targets stay allowed, even inside a substitution.
+        "echo $(rm -rf /tmp/build)",
+    ],
+)
+def test_benign_still_allowed_v19(client, command):
     assert server.check_dangerous(command) is None, command

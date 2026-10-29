@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.8.0"
+VERSION = "1.9.0"
 
 
 # ---------------------------------------------------------------------------
@@ -673,9 +673,8 @@ def _wipe_at_workdir_root(command: str) -> Optional[str]:
 # arguments stay byte-identical, so a quoted argument can never gain
 # (or lose) a block from this pass, and a plain command word is a
 # no-op. The raw check always runs first, so this pass can only add
-# blocks, never remove one. Known limit, not covered here: a command
-# hidden inside a substitution (`$(r\m -rf /)`, backticks) or a
-# subshell still needs its own recursive scan.
+# blocks, never remove one. v1.9.0 covers the known limit this left
+# open (substitutions, backticks, subshells) with its own scan below.
 
 _WRAPPER_WORDS = {"sudo", "command", "builtin", "env", "time", "nice"}
 _VALUE_FLAGS = {
@@ -797,6 +796,353 @@ def _normalize_command(command: str) -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# v1.9.0: recursive scan of substitutions, subshells, process substitutions
+# ---------------------------------------------------------------------------
+# v1.8.0 left this as a known limit, and it was real: a dangerous
+# command hidden inside $(...), backticks, or a subshell slipped past
+# every check, because the closing ) / ` is not a terminator any
+# regex or helper accepts (`echo $(rm -rf /)`, `` `rm -rf /` ``,
+# `(rm -rf /)` all sailed through). The shell EXECUTES all of those,
+# so the denylist scans them as commands in their own right: every
+# inner command string is run through the same raw-then-normalized
+# checks, recursively (depth capped), so a fragmented name inside a
+# substitution (`$(r\m -rf /)`) is caught too.
+# Groups that are NOT commands are never yielded as commands, but
+# their interiors are still scanned: bash executes a substitution
+# nested inside them (`$(( $(cmd) ))`, `arr=(x $(cmd) y)` and
+# `${x:-$(cmd)}` all run cmd). Quoting is respected throughout: a
+# substitution inside single quotes (`echo '$(rm -rf /)'`) is literal
+# text and stays allowed, while one inside double quotes
+# (`echo "$(rm -rf /)"`) still runs and is blocked. This pass can
+# only add blocks, never remove one.
+
+_NESTED_MAX_DEPTH = 8
+_SUBSHELL_KEYWORDS = {"time", "coproc"}
+_WORD_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+
+
+def _skip_squote(text: str, i: int) -> int:
+    """Index just past the single-quoted region starting at `i`."""
+    j = text.find("'", i + 1)
+    return len(text) if j == -1 else j + 1
+
+
+def _skip_ansi_c(text: str, i: int) -> int:
+    """Index just past the $'...' region starting at `i` ($ at `i`)."""
+    j = i + 2
+    n = len(text)
+    while j < n:
+        if text[j] == "\\" and j + 1 < n:
+            j += 2
+            continue
+        if text[j] == "'":
+            return j + 1
+        j += 1
+    return n
+
+
+def _backtick_close(text: str, i: int) -> Optional[int]:
+    """Index of the backtick closing the substitution at `i`, or None."""
+    j = i + 1
+    n = len(text)
+    while j < n:
+        if text[j] == "\\" and j + 1 < n:
+            j += 2
+            continue
+        if text[j] == "`":
+            return j
+        j += 1
+    return None
+
+
+def _brace_close(text: str, i: int) -> Optional[int]:
+    """Index of the } matching the { at `i` (quote-aware), or None."""
+    depth = 0
+    j = i
+    n = len(text)
+    while j < n:
+        ch = text[j]
+        if ch == "\\":
+            j += 2
+            continue
+        if ch == "'":
+            j = _skip_squote(text, j)
+            continue
+        if ch == '"':
+            j += 1
+            while j < n:
+                if text[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    j += 1
+                    break
+                j += 1
+            continue
+        if ch == "$" and j + 1 < n and text[j + 1] == "'":
+            j = _skip_ansi_c(text, j)
+            continue
+        if ch == "`":
+            close = _backtick_close(text, j)
+            j = n if close is None else close + 1
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    return None
+
+
+def _paren_close(text: str, i: int) -> Optional[int]:
+    """Index of the ) matching the ( at `i` (quote-aware), or None.
+
+    Nested parens count (so $(( )) arithmetic and a subshell inside
+    a substitution stay balanced), and quoted regions, backticks and
+    ${...} groups are skipped so a ) inside them never closes early.
+    """
+    depth = 0
+    j = i
+    n = len(text)
+    while j < n:
+        ch = text[j]
+        if ch == "\\":
+            j += 2
+            continue
+        if ch == "'":
+            j = _skip_squote(text, j)
+            continue
+        if ch == '"':
+            j += 1
+            while j < n:
+                if text[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    j += 1
+                    break
+                j += 1
+            continue
+        if ch == "$" and j + 1 < n and text[j + 1] == "'":
+            j = _skip_ansi_c(text, j)
+            continue
+        if ch == "`":
+            close = _backtick_close(text, j)
+            j = n if close is None else close + 1
+            continue
+        if ch == "$" and j + 1 < n and text[j + 1] == "{":
+            close = _brace_close(text, j + 1)
+            j = n if close is None else close + 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return j
+        j += 1
+    return None
+
+
+def _dollar_paren(text: str, i: int, groups: list[str]) -> int:
+    """Handle a $( at `i`: append its inner command, return next index.
+
+    $(( arithmetic is not a command, so its interior is only scanned
+    for nested substitutions (which bash does execute there).
+    """
+    n = len(text)
+    if i + 2 < n and text[i + 2] == "(":
+        close = _paren_close(text, i + 1)
+        if close is None:
+            return n
+        _scan_groups_into(text[i + 2:close], groups)
+        return close + 1
+    close = _paren_close(text, i + 1)
+    if close is None:
+        groups.append(text[i + 2:])
+        return n
+    groups.append(text[i + 2:close])
+    return close + 1
+
+
+def _scan_dquoted_into(text: str, i: int, groups: list[str]) -> int:
+    """Scan the "..." region opening at `i`, return index past it.
+
+    Substitutions stay live inside double quotes ($(), backticks,
+    ${...}), so they are collected here; a plain ( subshell does not
+    execute inside quotes and is never collected.
+    """
+    n = len(text)
+    i += 1
+    while i < n:
+        ch = text[i]
+        if ch == "\\" and i + 1 < n:
+            i += 2
+            continue
+        if ch == '"':
+            return i + 1
+        if ch == "`":
+            close = _backtick_close(text, i)
+            if close is None:
+                groups.append(text[i + 1:])
+                return n
+            groups.append(text[i + 1:close])
+            i = close + 1
+            continue
+        if ch == "$" and i + 1 < n and text[i + 1] == "(":
+            i = _dollar_paren(text, i, groups)
+            continue
+        if ch == "$" and i + 1 < n and text[i + 1] == "{":
+            close = _brace_close(text, i + 1)
+            if close is None:
+                return n
+            _scan_groups_into(text[i + 2:close], groups)
+            i = close + 1
+            continue
+        i += 1
+    return n
+
+
+def _scan_paren_group(text: str, i: int, groups: list[str]) -> int:
+    """Handle a plain ( at `i`: yield a subshell / process substitution,
+    or scan (never yield) a non-command group. Returns next index."""
+    n = len(text)
+    if i + 1 < n and text[i + 1] == "(":
+        # (( ... )) arithmetic command: not a command, scan interior.
+        close = _paren_close(text, i)
+        if close is None:
+            return n
+        _scan_groups_into(text[i + 1:close], groups)
+        return close + 1
+    # Previous significant char decides the role: start / separator /
+    # ( / { / ! means a subshell, < or > means process substitution,
+    # = means array assignment, an abutting word means a function
+    # definition (empty) or a case pattern, and a spaced word means a
+    # case pattern — except time / coproc, which take a subshell.
+    j = i - 1
+    while j >= 0 and text[j] in " \t\n":
+        j -= 1
+    abuts = j == i - 1
+    prev = text[j] if j >= 0 else ""
+    close = _paren_close(text, i)
+    interior = text[i + 1:] if close is None else text[i + 1:close]
+    nxt = n if close is None else close + 1
+    if j < 0 or prev in ";|&({!":
+        groups.append(interior)
+        return nxt
+    if prev in "<>" and abuts:
+        groups.append(interior)
+        return nxt
+    if prev == "=":
+        _scan_groups_into(interior, groups)
+        return nxt
+    if prev in _WORD_CHARS:
+        if abuts:
+            # foo(...) with an empty body is a function definition;
+            # anything else abutting a word is not a subshell either
+            # (case patterns can carry substitutions, so scan it).
+            if interior.strip() == "":
+                return nxt
+            _scan_groups_into(interior, groups)
+            return nxt
+        k = j
+        while k >= 0 and text[k] in _WORD_CHARS:
+            k -= 1
+        if text[k + 1:j + 1] in _SUBSHELL_KEYWORDS:
+            groups.append(interior)
+            return nxt
+        _scan_groups_into(interior, groups)
+        return nxt
+    _scan_groups_into(interior, groups)
+    return nxt
+
+
+def _scan_groups_into(text: str, groups: list[str]) -> None:
+    """Append every inner command string in `text` to `groups`.
+
+    Only executed groups are appended; non-command groups contribute
+    their interiors (scanned for nested executed groups). Single
+    quotes and $'...' regions are literal and contribute nothing.
+    """
+    n = len(text)
+    i = 0
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'":
+            i = _skip_squote(text, i)
+            continue
+        if ch == '"':
+            i = _scan_dquoted_into(text, i, groups)
+            continue
+        if ch == "`":
+            close = _backtick_close(text, i)
+            if close is None:
+                groups.append(text[i + 1:])
+                return
+            groups.append(text[i + 1:close])
+            i = close + 1
+            continue
+        if ch == "$" and i + 1 < n and text[i + 1] == "(":
+            i = _dollar_paren(text, i, groups)
+            continue
+        if ch == "$" and i + 1 < n and text[i + 1] == "'":
+            i = _skip_ansi_c(text, i)
+            continue
+        if ch == "$" and i + 1 < n and text[i + 1] == '"':
+            i = _scan_dquoted_into(text, i + 1, groups)
+            continue
+        if ch == "$" and i + 1 < n and text[i + 1] == "{":
+            close = _brace_close(text, i + 1)
+            if close is None:
+                return
+            _scan_groups_into(text[i + 2:close], groups)
+            i = close + 1
+            continue
+        if ch == "(":
+            i = _scan_paren_group(text, i, groups)
+            continue
+        i += 1
+
+
+def _scan_groups(text: str) -> list[str]:
+    """Inner command strings executed via $(), backticks, subshells,
+    and process substitutions in `text` (see _scan_groups_into)."""
+    groups: list[str] = []
+    _scan_groups_into(text, groups)
+    return groups
+
+
+def _check_nested(command: str, cwd: Optional[Path] = None, depth: int = 0) -> Optional[str]:
+    """Denylist pass over every nested command in `command`.
+
+    Same checks as the top level (raw, then command-word-normalized),
+    recursed into each inner command so `$(echo $(rm -rf /))` is
+    caught at whatever depth it hides. Depth-capped; the cap only
+    stops absurd nesting, real commands nest far shallower.
+    """
+    if depth >= _NESTED_MAX_DEPTH:
+        return None
+    for inner in _scan_groups(command):
+        label = _check_dangerous_once(inner, cwd)
+        if label:
+            return label
+        normalized = _normalize_command(inner)
+        if normalized != inner:
+            label = _check_dangerous_once(normalized, cwd)
+            if label:
+                return label
+        label = _check_nested(inner, cwd, depth + 1)
+        if label:
+            return label
+    return None
+
+
 def _check_dangerous_once(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     """One pass of the denylist over `command` (raw or normalized)."""
     for rx, label in _DANGEROUS_RES:
@@ -826,10 +1172,12 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     `find . -delete`) are blocked too; in a subdirectory they stay
     allowed. Pass no cwd to skip only that workdir-root rule.
 
-    Two passes: the raw command first, then (v1.8.0) the same checks
+    Three passes: the raw command first, then (v1.8.0) the same checks
     on the command with each segment's command word decoded, so a
     fragmented command name (`r\\m -rf /`) is caught exactly like
-    the plain spelling. The second pass can only add blocks.
+    the plain spelling, then (v1.9.0) the same checks over every
+    command hidden inside a substitution, subshell, or process
+    substitution, recursively. Each pass can only add blocks.
     """
     if ALLOW_DANGEROUS:
         return None
@@ -838,8 +1186,10 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
         return label
     normalized = _normalize_command(command)
     if normalized != command:
-        return _check_dangerous_once(normalized, cwd)
-    return None
+        label = _check_dangerous_once(normalized, cwd)
+        if label:
+            return label
+    return _check_nested(command, cwd)
 
 
 # ---------------------------------------------------------------------------
