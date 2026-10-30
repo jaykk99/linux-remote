@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.9.0"
+VERSION = "1.10.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1137,7 +1137,173 @@ def _check_nested(command: str, cwd: Optional[Path] = None, depth: int = 0) -> O
             label = _check_dangerous_once(normalized, cwd)
             if label:
                 return label
+        label = _check_command_strings(inner, cwd, depth + 1)
+        if label:
+            return label
         label = _check_nested(inner, cwd, depth + 1)
+        if label:
+            return label
+    return None
+
+
+# ---------------------------------------------------------------------------
+# v1.10.0: command-string arguments (bash -c / eval)
+# ---------------------------------------------------------------------------
+# v1.9.0 left this as a known limit, and it was real — but only for
+# some commands. `rm` forms inside a -c / eval string were already
+# caught (the helpers find `rm` anywhere in a segment), while the
+# power commands were not: they have only the anchored regex
+# (`^` or a separator before shutdown/reboot/halt/poweroff), and
+# inside `bash -c 'shutdown -h now'` or `eval 'shutdown -h now'`
+# there is neither — the string starts with bash/eval. Nested
+# quoting broke the rest too: `bash -c 'eval "rm -rf /"'` slipped
+# past the helpers because the extra quote layer turned the `/`
+# token into `/'`. The shell EXECUTES the -c / eval string as a
+# command, so the denylist scans it as one: the string is extracted
+# (decoded, so a fragmented name inside it is caught by the
+# normalization pass) and run through the same checks, recursively,
+# so `bash -c 'eval "rm -rf /"'` is caught at the inner layer.
+# Only a command-position interpreter counts: `echo eval '...'` is
+# just printing, and a -c string that is only a variable (`bash -c
+# "$cmd"`) stays opaque — the value is not visible statically, so
+# that form is a noted gap, not a claimed block. Interpreter -c/-e
+# strings for other languages (python -c, perl -e) are NOT scanned
+# here: that string is code, not shell, and scanning it as shell
+# would not even catch its os.system/system() forms (their trailing
+# quote/paren breaks the same token the helpers need). This pass
+# can only add blocks, never remove one.
+
+_SHELL_COMMAND_STRINGS = {"bash", "sh", "dash", "zsh"}
+
+
+def _segment_words(segment: str) -> list[tuple[str, str, int, int]]:
+    """(raw, decoded, start, end) per shell word in a segment.
+
+    Spans come from `_word_end` (quote-aware, so a quoted string is
+    one word even with spaces inside); decoding comes from `_tokens`,
+    so a fragmented or quoted word decodes the way the shell sees it.
+    """
+    words: list[tuple[str, str, int, int]] = []
+    i = 0
+    n = len(segment)
+    while True:
+        while i < n and segment[i].isspace():
+            i += 1
+        if i >= n:
+            break
+        end = _word_end(segment, i)
+        raw = segment[i:end]
+        toks = _tokens(raw)
+        words.append((raw, toks[0] if toks else "", i, end))
+        i = end
+    return words
+
+
+def _extract_command_strings(command: str) -> list[str]:
+    """Decoded command strings the shell will execute from `command`.
+
+    Per segment, wrappers, assignments and wrapper flags are skipped
+    exactly like `_normalize_segment`, then: if the command word is
+    `eval`, the rest of the segment (decoded, minus a leading `--`)
+    is its command string; if it is bash/sh/dash/zsh, the word after
+    its -c flag is — exact `-c`, combined flags with -c last
+    (`-xc`), or an attached string (`-c'...'`). An absolute path
+    (`/bin/bash`) counts via its basename, as does a fragmented name
+    (`ba\\sh`). Returns decoded strings: the form the interpreter
+    actually runs, so a nested eval inside one is itself extracted
+    on the recursive pass.
+    """
+    out: list[str] = []
+    for segment in _segments(command):
+        words = _segment_words(segment)
+        if not words:
+            continue
+        idx = 0
+        wrapper: Optional[str] = None
+        flags_phase = False
+        cmd_idx: Optional[int] = None
+        while idx < len(words):
+            _raw, decoded, _s, _e = words[idx]
+            if decoded in _WRAPPER_WORDS:
+                wrapper = decoded
+                flags_phase = wrapper in _VALUE_FLAGS or wrapper in ("command", "time", "builtin")
+                idx += 1
+                continue
+            if _ASSIGN_RE.match(decoded) and (wrapper is None or wrapper in ("env", "sudo")):
+                idx += 1
+                continue
+            if flags_phase:
+                if decoded == "--":
+                    flags_phase = False
+                    idx += 1
+                    continue
+                if decoded.startswith("-") and decoded != "-":
+                    idx += 1
+                    if decoded in _VALUE_FLAGS.get(wrapper or "", set()):
+                        idx += 1  # consume the flag's value word
+                    continue
+                flags_phase = False
+            cmd_idx = idx
+            break
+        if cmd_idx is None:
+            continue
+        _raw, decoded, _s, _end = words[cmd_idx]
+        base = decoded.rsplit("/", 1)[-1]
+        if base == "eval":
+            rest_words = [w[1] for w in words[cmd_idx + 1:]]
+            if rest_words and rest_words[0] == "--":
+                rest_words = rest_words[1:]
+            rest = " ".join(rest_words)
+            if rest:
+                out.append(rest)
+        elif base in _SHELL_COMMAND_STRINGS:
+            j = cmd_idx + 1
+            while j < len(words):
+                d = words[j][1]
+                if d == "--":
+                    break
+                if d == "-c":
+                    if j + 1 < len(words):
+                        out.append(words[j + 1][1])
+                    break
+                if d.startswith("-c") and len(d) > 2:
+                    out.append(d[2:])
+                    break
+                if d.startswith("-") and not d.startswith("--") and d.endswith("c"):
+                    if j + 1 < len(words):
+                        out.append(words[j + 1][1])
+                    break
+                if d.startswith("-") and d != "-":
+                    j += 1
+                    continue
+                break
+    return out
+
+
+def _check_command_strings(command: str, cwd: Optional[Path] = None, depth: int = 0) -> Optional[str]:
+    """Denylist pass over every -c / eval command string in `command`.
+
+    Each extracted string gets the same checks as a top-level command
+    (raw, then command-word-normalized, then nested groups, then its
+    own -c / eval strings), so nesting of any depth is caught up to
+    the shared depth cap. Depth-capped; real commands nest far
+    shallower than the cap.
+    """
+    if depth >= _NESTED_MAX_DEPTH:
+        return None
+    for inner in _extract_command_strings(command):
+        label = _check_dangerous_once(inner, cwd)
+        if label:
+            return label
+        normalized = _normalize_command(inner)
+        if normalized != inner:
+            label = _check_dangerous_once(normalized, cwd)
+            if label:
+                return label
+        label = _check_nested(inner, cwd, depth + 1)
+        if label:
+            return label
+        label = _check_command_strings(inner, cwd, depth + 1)
         if label:
             return label
     return None
@@ -1172,12 +1338,14 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     `find . -delete`) are blocked too; in a subdirectory they stay
     allowed. Pass no cwd to skip only that workdir-root rule.
 
-    Three passes: the raw command first, then (v1.8.0) the same checks
+    Four passes: the raw command first, then (v1.8.0) the same checks
     on the command with each segment's command word decoded, so a
     fragmented command name (`r\\m -rf /`) is caught exactly like
     the plain spelling, then (v1.9.0) the same checks over every
     command hidden inside a substitution, subshell, or process
-    substitution, recursively. Each pass can only add blocks.
+    substitution, recursively, then (v1.10.0) the same checks over
+    every command string passed to bash/sh -c or eval, recursively.
+    Each pass can only add blocks.
     """
     if ALLOW_DANGEROUS:
         return None
@@ -1189,7 +1357,10 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
         label = _check_dangerous_once(normalized, cwd)
         if label:
             return label
-    return _check_nested(command, cwd)
+    label = _check_nested(command, cwd)
+    if label:
+        return label
+    return _check_command_strings(command, cwd)
 
 
 # ---------------------------------------------------------------------------

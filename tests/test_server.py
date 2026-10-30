@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.9.0"
+    assert r.json()["version"] == "1.10.0"
 
 
 # ---------------------------------------------------------------------------
@@ -962,4 +962,91 @@ def test_dangerous_blocked_v19(client, command):
     ],
 )
 def test_benign_still_allowed_v19(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# ---------------------------------------------------------------------------
+# v1.10.0: command-string arguments (bash -c / eval)
+# ---------------------------------------------------------------------------
+# The rm forms inside a -c / eval string were already blocked (the
+# helpers find rm anywhere), but the power commands were not: their
+# only guard is the anchored regex, and inside `bash -c 'shutdown
+# -h now'` or `eval 'shutdown -h now'` there is no ^ or separator
+# before the command word. Nested quoting broke the rest:
+# `bash -c 'eval "rm -rf /"'` slipped past the helpers because the
+# extra quote layer turned the / token into /'. The shell executes
+# the -c / eval string as a command, so all of these are blocked.
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Power commands inside -c / eval strings (the actual gap).
+        "bash -c 'shutdown -h now'",
+        "bash -c 'reboot'",
+        "bash -c 'halt'",
+        "bash -c 'poweroff'",
+        "sh -c 'shutdown -h now'",
+        "dash -c 'reboot'",
+        # Wrappers, paths, fragmented names, combined/attached -c.
+        "sudo bash -c 'shutdown -h now'",
+        "sudo -u root bash -c 'shutdown -h now'",
+        "command bash -c 'shutdown -h now'",
+        "env bash -c 'shutdown -h now'",
+        "/bin/bash -c 'shutdown -h now'",
+        "ba\\sh -c 'shutdown -h now'",
+        "bash -xc 'shutdown -h now'",
+        "bash -c'shutdown -h now'",
+        'bash -c "shutdown -h now"',
+        # eval forms: quoted, double-quoted, unquoted, --, separator.
+        "eval 'shutdown -h now'",
+        "eval 'reboot'",
+        'eval "shutdown -h now"',
+        "eval shutdown -h now",
+        "eval -- 'shutdown -h now'",
+        "echo hi; eval 'shutdown -h now'",
+        # Nested quoting: -c string holding an eval string.
+        "bash -c 'eval \"rm -rf /\"'",
+        "bash -c 'eval \"shutdown -h now\"'",
+        "bash -c 'shutdow\\n -h now'",
+        # -c / eval strings inside substitutions (both passes stack).
+        "echo $(bash -c 'shutdown -h now')",
+        "echo $(eval 'shutdown -h now')",
+        # rm forms inside -c strings stay blocked (regression).
+        "bash -c 'rm -rf /'",
+        "eval 'rm -rf /'",
+        # Other denylisted commands inside -c strings.
+        "bash -c 'dd if=/dev/zero of=/dev/sda'",
+        "bash -c 'mkfs.ext4 /dev/sda'",
+        "bash -c 'chmod -R 000 /'",
+        "bash -c 'find / -delete'",
+    ],
+)
+def test_dangerous_blocked_v110(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Benign -c / eval strings stay allowed.
+        "bash -c 'echo hi'",
+        "bash -c 'echo hi' && echo done",
+        "eval 'echo hi'",
+        # Mentioning a power command is not running it.
+        "bash -c 'echo shutdown'",
+        "bash -c 'grep shutdown file'",
+        # echo just prints an eval-looking string; it never runs it.
+        "echo eval 'shutdown -h now'",
+        # Named targets stay allowed, even inside a -c string.
+        "bash -c 'rm -rf /tmp/build'",
+        # After --, -c is a script name, not a flag: nothing runs.
+        "bash -- -c shutdown",
+        # A -c string that is only a variable is opaque (noted gap,
+        # not a claimed block): the value is not visible statically.
+        "bash -c '$cmd'",
+    ],
+)
+def test_benign_still_allowed_v110(client, command):
     assert server.check_dangerous(command) is None, command
