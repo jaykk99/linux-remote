@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.10.0"
+    assert r.json()["version"] == "1.11.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1043,10 +1043,123 @@ def test_dangerous_blocked_v110(client, command):
         "bash -c 'rm -rf /tmp/build'",
         # After --, -c is a script name, not a flag: nothing runs.
         "bash -- -c shutdown",
-        # A -c string that is only a variable is opaque (noted gap,
-        # not a claimed block): the value is not visible statically.
-        "bash -c '$cmd'",
+        # NOTE: "bash -c '$cmd'" was benign here as v1.10.0's noted
+        # gap; v1.11.0 closes it (opaque variable-only strings are
+        # blocked), so it moved to the v1.11.0 blocked list.
     ],
 )
 def test_benign_still_allowed_v110(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# ---------------------------------------------------------------------------
+# v1.11.0: interpreter code strings, heredoc-fed interpreters,
+# variable-only command strings
+# ---------------------------------------------------------------------------
+# v1.10.0's three noted gaps, all real: a python -c / perl -e code
+# string is not shell, so scanning it as shell missed its sink calls
+# (the trailing quote/paren breaks every / token); a heredoc body
+# fed to an interpreter is executed, but a power command on a body
+# line has no ^ or separator before it and a python body has no
+# shell tokens at all; and a -c string that is only a variable was
+# waved through as opaque. All three are blocked now. Bodies are
+# only scanned when the receiving command actually executes stdin:
+# heredocs to cat, to a named script file, or to a -c program's
+# stdin are data, not code, and stay allowed.
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Heredoc-fed shell interpreters (power commands on body
+        # lines were the actual gap; rm was already caught).
+        "bash <<'EOF'\nshutdown -h now\nEOF",
+        "bash <<'EOF'\nrm -rf /\nEOF",
+        "sh <<'EOF'\nreboot\nEOF",
+        "bash -s <<'EOF'\nshutdown -h now\nEOF",
+        "sudo bash <<'EOF'\nshutdown -h now\nEOF",
+        # Heredoc piped into an interpreter downstream.
+        "cat <<'EOF' | bash\nshutdown -h now\nEOF",
+        "cat <<'EOF' | python3\nimport os\nos.system('rm -rf /')\nEOF",
+        # Herestrings feed stdin the same way.
+        "bash <<< 'shutdown -h now'",
+        "python3 <<< 'import os; os.system(\"rm -rf /\")'",
+        # <<- strips leading tabs before the body runs, so a
+        # tab-indented power command must still be caught.
+        "bash <<-'EOF'\n\tshutdown -h now\n\tEOF",
+        # Heredoc-fed code interpreters: sink calls and direct
+        # wipe calls in the body.
+        "python3 <<'PYEOF'\nimport os\nos.system('rm -rf /')\nPYEOF",
+        "python3 <<'PYEOF'\nimport shutil\nshutil.rmtree('/')\nPYEOF",
+        "python3 - <<'PYEOF'\nimport os\nos.system('shutdown -h now')\nPYEOF",
+        # Interpreter -c / -e / -r code strings: sink calls.
+        "python3 -c \"import os; os.system('rm -rf /')\"",
+        "python3 -c \"import os; os.system('shutdown -h now')\"",
+        "python3 -c \"import os; os.popen('rm -rf /')\"",
+        "python3 -c \"import subprocess; subprocess.call(['rm', '-rf', '/'])\"",
+        "python3 -c \"import subprocess; subprocess.call('rm -rf /', shell=True)\"",
+        "perl -e 'system(\"rm -rf /\")'",
+        "perl -e 'system(\"shutdown -h now\")'",
+        "perl -e 'system \"rm -rf /\"'",
+        "perl -e '`rm -rf /`'",
+        "ruby -e 'system(\"rm -rf /\")'",
+        "node -e \"require('child_process').execSync('rm -rf /')\"",
+        "php -r 'system(\"rm -rf /\");'",
+        # Interpreter code strings: direct wipe calls.
+        "python3 -c \"import shutil; shutil.rmtree('/')\"",
+        "python3 -c \"import shutil, os; shutil.rmtree(os.path.expanduser('~'))\"",
+        "perl -e 'use File::Path qw(rmtree); rmtree(\"/\")'",
+        "ruby -e 'require \"fileutils\"; FileUtils.rm_rf(\"/\")'",
+        # Variable-only command strings: resolved from a literal
+        # assignment in the same command, or blocked as opaque.
+        "bash -c '$cmd'",
+        'bash -c "$cmd"',
+        'eval "$cmd"',
+        "cmd='shutdown -h now'; eval \"$cmd\"",
+        "cmd='rm -rf /'; bash -c \"$cmd\"",
+        "python3 -c \"$code\"",
+        # Stacking: a -c string holding an interpreter -c string,
+        # and a -c string holding a `;` inside the inner code.
+        "bash -c 'python3 -c \"import os; os.system(\\\"rm -rf /\\\")\"'",
+        "bash -c 'echo hi; shutdown -h now'",
+        # Interpreter -c strings inside substitutions.
+        "echo $(python3 -c \"import os; os.system('rm -rf /')\")",
+    ],
+)
+def test_dangerous_blocked_v111(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Benign interpreter code stays allowed, including a sink
+        # call with a harmless command and a printed (not run)
+        # dangerous string.
+        "python3 -c \"print('hello')\"",
+        "python3 -c \"import os; print(os.getcwd())\"",
+        "python3 -c \"print('rm -rf /')\"",
+        "python3 -c \"import os; os.system('ls /tmp')\"",
+        "python3 -c \"import shutil; shutil.rmtree('/tmp/build')\"",
+        "python3 -u -c \"print('hi')\"",
+        "perl -e 'print \"hi\\n\"'",
+        "perl -e 'system(\"ls /tmp\")'",
+        "node --eval \"console.log('hi')\"",
+        "php -d memory_limit=256M -r 'echo \"hi\";'",
+        # A variable-only string that resolves to a benign command.
+        "cmd='ls /tmp'; bash -c \"$cmd\"",
+        # Benign heredoc bodies stay allowed.
+        "bash <<'EOF'\necho hello\nls /tmp\nEOF",
+        "bash -s <<'EOF'\necho hi\nEOF",
+        "python3 <<'EOF'\nprint('hello')\nEOF",
+        "python3 - <<'EOF'\nprint('hi')\nEOF",
+        # Heredoc bodies that are data, not an executed program:
+        # to cat, or as stdin to a named script file.
+        "cat > notes.txt <<'EOF'\nhello world\nEOF",
+        "bash script.sh <<'EOF'\nshutdown -h now\nEOF",
+        "python3 script.py <<'EOF'\nimport os\nos.system('rm -rf /')\nEOF",
+    ],
+)
+def test_benign_still_allowed_v111(client, command):
     assert server.check_dangerous(command) is None, command

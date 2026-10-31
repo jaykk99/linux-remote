@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.10.0"
+VERSION = "1.11.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1129,18 +1129,10 @@ def _check_nested(command: str, cwd: Optional[Path] = None, depth: int = 0) -> O
     if depth >= _NESTED_MAX_DEPTH:
         return None
     for inner in _scan_groups(command):
-        label = _check_dangerous_once(inner, cwd)
-        if label:
-            return label
-        normalized = _normalize_command(inner)
-        if normalized != inner:
-            label = _check_dangerous_once(normalized, cwd)
-            if label:
-                return label
-        label = _check_command_strings(inner, cwd, depth + 1)
-        if label:
-            return label
-        label = _check_nested(inner, cwd, depth + 1)
+        # _check_all (defined below) runs every pass over the inner
+        # command, so a -c string, an interpreter -c string, or a
+        # heredoc body hidden inside a substitution is caught too.
+        label = _check_all(inner, cwd, depth + 1)
         if label:
             return label
     return None
@@ -1214,7 +1206,14 @@ def _extract_command_strings(command: str) -> list[str]:
     on the recursive pass.
     """
     out: list[str] = []
-    for segment in _segments(command):
+    # v1.11.0: segment both ways and union the results. _segments
+    # splits inside quotes, so it truncates a -c string holding a
+    # `;` (`bash -c 'python3 -c "import os; ..."'` lost everything
+    # after the inner `;`); _split_top_level is quote-aware, so it
+    # keeps the whole string. The old segmentation stays first, so
+    # every previously extracted string is still extracted exactly
+    # as before, and the quote-aware pass only adds strings.
+    for segment in list(_segments(command)) + _split_top_level(command):
         words = _segment_words(segment)
         if not words:
             continue
@@ -1277,7 +1276,7 @@ def _extract_command_strings(command: str) -> list[str]:
                     j += 1
                     continue
                 break
-    return out
+    return list(dict.fromkeys(out))
 
 
 def _check_command_strings(command: str, cwd: Optional[Path] = None, depth: int = 0) -> Optional[str]:
@@ -1292,21 +1291,949 @@ def _check_command_strings(command: str, cwd: Optional[Path] = None, depth: int 
     if depth >= _NESTED_MAX_DEPTH:
         return None
     for inner in _extract_command_strings(command):
-        label = _check_dangerous_once(inner, cwd)
-        if label:
-            return label
-        normalized = _normalize_command(inner)
-        if normalized != inner:
-            label = _check_dangerous_once(normalized, cwd)
-            if label:
-                return label
-        label = _check_nested(inner, cwd, depth + 1)
-        if label:
-            return label
-        label = _check_command_strings(inner, cwd, depth + 1)
+        # v1.11.0: a string that is only variable references is
+        # resolved from a literal assignment in the same command
+        # (`cmd='shutdown -h now'; eval "$cmd"`) and scanned as the
+        # resolved text; if no assignment is visible the program it
+        # will run is unknowable, so it is blocked as opaque rather
+        # than waved through (v1.10.0's noted gap, now closed).
+        resolved = _variable_only_resolution(inner, command)
+        if resolved is not None:
+            kind, value = resolved
+            if kind == "opaque":
+                return "opaque command string (variable value not visible)"
+            inner = value
+        label = _check_all(inner, cwd, depth + 1)
         if label:
             return label
     return None
+
+
+# ---------------------------------------------------------------------------
+# v1.11.0: interpreter code strings, heredoc-fed interpreters, and
+# variable-only command strings
+# ---------------------------------------------------------------------------
+# v1.10.0 closed bash -c / eval but left three noted gaps, all real:
+# (1) `python3 -c "import os; os.system('rm -rf /')"` sailed through
+# because the code string is not shell, and scanning it as shell
+# cannot work: the trailing quote/paren breaks the `/` token every
+# rm/power pattern needs. (2) A heredoc body fed to an interpreter
+# (`bash <<EOF` / `python3 <<EOF`) is executed, but only some of its
+# lines were caught incidentally: a power command on a body line has
+# no ^ or separator before it, and a python body has no shell tokens
+# at all. (3) A -c string that is only a variable (`bash -c
+# "$cmd"`) was waved through as opaque. The shell / interpreter
+# EXECUTES all three, so the denylist now scans what they execute:
+# interpreter code strings are scanned for shell commands passed to
+# a sink (os.system, system(), execSync, backticks, ...) plus direct
+# wipe calls (shutil.rmtree('/'), FileUtils.rm_rf('/'),
+# fs.rmSync('/', {recursive: true})), heredoc/herestring bodies are
+# scanned as shell or as code when the receiving command is an
+# interpreter reading stdin, and a variable-only string is resolved
+# from a literal assignment in the same command or blocked opaque.
+# Only a command-position interpreter counts, and a heredoc body is
+# only scanned when its consumer actually executes stdin: `cat
+# <<EOF` data, `bash script.sh <<EOF` input to that script, and a
+# -c code string's own stdin are data, not code, and stay unscanned
+# by this pass. This pass can only add blocks, never remove one.
+
+_VAR_REF_RE = re.compile(
+    r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\}|[@*#?$!-]|[0-9]+)"
+)
+_ASSIGN_LITERAL_RE = re.compile(
+    r"""(?:^|[;\n&|]\s*)(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)="""
+    r"""('([^']*)'|"([^"]*)"|([^\s;&|'"$`\\]+))"""
+)
+
+
+def _assigned_literals(command: str) -> dict[str, str]:
+    """Literal VAR=value assignments visible in `command`.
+
+    Only quoted literals and bare words without $ / backtick / quote
+    count: anything else could expand, so it is not a known value.
+    A later assignment wins, matching shell execution order.
+    """
+    out: dict[str, str] = {}
+    for m in _ASSIGN_LITERAL_RE.finditer(command):
+        value = m.group(3)
+        if value is None:
+            value = m.group(4)
+        if value is None:
+            value = m.group(5)
+        if value is not None:
+            out[m.group(1)] = value
+    return out
+
+
+def _variable_only_resolution(
+    string: str, command: str
+) -> Optional[tuple[str, Optional[str]]]:
+    """Resolve a string made only of variable references.
+
+    Returns None when the string is not variable-only (it has literal
+    text, so the normal passes scan it), ("resolved", text) when
+    every reference has a literal assignment in `command`, and
+    ("opaque", None) when any reference's value is not visible.
+    """
+    refs = list(_VAR_REF_RE.finditer(string))
+    if not refs:
+        return None
+    if _VAR_REF_RE.sub("", string).strip():
+        return None
+    assigns = _assigned_literals(command)
+    parts: list[str] = []
+    for m in refs:
+        tok = m.group(0)
+        if tok.startswith("${"):
+            name = tok[2:-1]
+        elif tok[1:].isalpha() or tok[1] == "_":
+            name = tok[1:]
+        elif tok[1:].isdigit() or tok in ("$@", "$*", "$#", "$?", "$!", "$-", "$$"):
+            return ("opaque", None)
+        else:
+            name = tok[1:]
+        if name not in assigns:
+            return ("opaque", None)
+        parts.append(assigns[name])
+    return ("resolved", " ".join(parts))
+
+
+def _skip_wrappers(words: list[tuple[str, str, int, int]]) -> Optional[int]:
+    """Index of the command word in `words`, skipping wrappers.
+
+    Same skipping as `_extract_command_strings` (chained wrappers,
+    leading assignments, wrapper flag values): factored out so the
+    interpreter and heredoc passes share it exactly.
+    """
+    idx = 0
+    wrapper: Optional[str] = None
+    flags_phase = False
+    while idx < len(words):
+        _raw, decoded, _s, _e = words[idx]
+        if decoded in _WRAPPER_WORDS:
+            wrapper = decoded
+            flags_phase = wrapper in _VALUE_FLAGS or wrapper in ("command", "time", "builtin")
+            idx += 1
+            continue
+        if _ASSIGN_RE.match(decoded) and (wrapper is None or wrapper in ("env", "sudo")):
+            idx += 1
+            continue
+        if flags_phase:
+            if decoded == "--":
+                flags_phase = False
+                idx += 1
+                continue
+            if decoded.startswith("-") and decoded != "-":
+                idx += 1
+                if decoded in _VALUE_FLAGS.get(wrapper or "", set()):
+                    idx += 1
+                continue
+            flags_phase = False
+        return idx
+    return None
+
+
+def _split_top_level(command: str) -> list[str]:
+    """Split `command` on top-level separators only.
+
+    Unlike `_segments`, separators inside quotes, backticks, $(),
+    ${}, subshells, and brace groups are not separators: a `;`
+    inside `python3 -c "import os; os.system(...)"` belongs to the
+    code string, not to the outer command, and splitting there
+    would lose the sink call. Newlines count as separators (a
+    multiline command runs line by line); a backslash-newline is a
+    continuation, not a separator.
+    """
+    parts: list[str] = []
+    start = 0
+    i = 0
+    n = len(command)
+    paren = 0
+    brace = 0
+    while i < n:
+        ch = command[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'":
+            i = _skip_squote(command, i)
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n:
+                if command[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if command[j] == '"':
+                    j += 1
+                    break
+                j += 1
+            i = j
+            continue
+        if ch == "$" and i + 1 < n and command[i + 1] == "'":
+            i = _skip_ansi_c(command, i)
+            continue
+        if ch == "`":
+            close = _backtick_close(command, i)
+            i = n if close is None else close + 1
+            continue
+        if ch == "(":
+            paren += 1
+            i += 1
+            continue
+        if ch == ")":
+            paren = max(0, paren - 1)
+            i += 1
+            continue
+        if ch == "{":
+            brace += 1
+            i += 1
+            continue
+        if ch == "}":
+            brace = max(0, brace - 1)
+            i += 1
+            continue
+        if paren == 0 and brace == 0:
+            if command[i:i + 2] in ("&&", "||"):
+                parts.append(command[start:i])
+                i += 2
+                start = i
+                continue
+            if ch in ";|&\n":
+                parts.append(command[start:i])
+                i += 1
+                start = i
+                continue
+        i += 1
+    parts.append(command[start:])
+    return parts
+
+
+# --- interpreter code strings -------------------------------------------------
+
+_INTERPRETERS: dict[str, dict] = {
+    "python": {
+        "names": {"python", "python3"},
+        "code_letters": {"c"},
+        "code_longs": set(),
+        "value_flags": {"-W", "-X"},
+    },
+    "perl": {
+        "names": {"perl"},
+        "code_letters": {"e"},
+        "code_longs": set(),
+        "value_flags": {"-I", "-M"},
+    },
+    "ruby": {
+        "names": {"ruby"},
+        "code_letters": {"e"},
+        "code_longs": set(),
+        "value_flags": {"-I", "-r"},
+    },
+    "node": {
+        "names": {"node", "nodejs"},
+        "code_letters": {"e", "p"},
+        "code_longs": {"--eval", "--print"},
+        "value_flags": {"-r", "--require"},
+    },
+    "php": {
+        "names": {"php"},
+        "code_letters": {"r"},
+        "code_longs": set(),
+        "value_flags": {"-d", "-f"},
+    },
+}
+_NAME_TO_LANG = {
+    name: lang for lang, spec in _INTERPRETERS.items() for name in spec["names"]
+}
+
+
+def _extract_interpreter_code(command: str) -> list[tuple[str, str]]:
+    """(lang, code) for every interpreter code string in `command`.
+
+    Per top-level segment (quote-aware, so a `;` inside the code
+    string does not split it), wrappers and assignments are skipped,
+    then: an exact code flag (`-c`, `-e`, `-r`, `-p`, `--eval`)
+    takes the next word; an attached flag (`-c'...'`) takes the
+    rest of the word; combined flags with the code letter last
+    (`-we`, `-uc`) take the next word. An absolute path counts via
+    its basename, as does a fragmented name. After `--` a flag word
+    is a script name, not a flag, so extraction stops.
+    """
+    out: list[tuple[str, str]] = []
+    for segment in _split_top_level(command):
+        words = _segment_words(segment)
+        if not words:
+            continue
+        cmd_idx = _skip_wrappers(words)
+        if cmd_idx is None:
+            continue
+        base = words[cmd_idx][1].rsplit("/", 1)[-1]
+        lang = _NAME_TO_LANG.get(base)
+        if lang is None:
+            continue
+        spec = _INTERPRETERS[lang]
+        letters: set[str] = spec["code_letters"]
+        j = cmd_idx + 1
+        while j < len(words):
+            d = words[j][1]
+            if d == "--":
+                break
+            if d in spec["code_longs"]:
+                if j + 1 < len(words):
+                    out.append((lang, words[j + 1][1]))
+                break
+            if len(d) == 2 and d[0] == "-" and d[1] in letters:
+                if j + 1 < len(words):
+                    out.append((lang, words[j + 1][1]))
+                break
+            if len(d) > 2 and d[0] == "-" and not d.startswith("--") and d[1] in letters:
+                out.append((lang, d[2:]))
+                break
+            if len(d) > 2 and d[0] == "-" and not d.startswith("--") and d[-1] in letters:
+                if j + 1 < len(words):
+                    out.append((lang, words[j + 1][1]))
+                break
+            if d in spec["value_flags"]:
+                j += 2
+                continue
+            if d.startswith("-") and d != "-":
+                if any(d.startswith(vf) and len(d) > len(vf) for vf in spec["value_flags"]):
+                    j += 1
+                    continue
+                j += 1
+                continue
+            break
+    return out
+
+
+def _py_escape(code: str, i: int) -> tuple[str, int]:
+    """Decode one backslash escape at `i` (the backslash); return (char, next)."""
+    esc = code[i + 1]
+    simple = {"n": "\n", "t": "\t", "r": "\r", "0": "\0"}
+    if esc in simple:
+        return simple[esc], i + 2
+    if esc == "x":
+        hexdigits = code[i + 2:i + 4]
+        if len(hexdigits) == 2 and all(c in "0123456789abcdefABCDEF" for c in hexdigits):
+            return chr(int(hexdigits, 16)), i + 4
+        return "x", i + 2
+    if esc == "u":
+        hexdigits = code[i + 2:i + 6]
+        if len(hexdigits) == 4 and all(c in "0123456789abcdefABCDEF" for c in hexdigits):
+            try:
+                return chr(int(hexdigits, 16)), i + 6
+            except ValueError:
+                pass
+        return "u", i + 2
+    if esc in "01234567":
+        j = i + 1
+        octdigits = ""
+        while j < len(code) and len(octdigits) < 3 and code[j] in "01234567":
+            octdigits += code[j]
+            j += 1
+        return chr(int(octdigits, 8) & 0xFF), j
+    return esc, i + 2
+
+
+def _parse_python_string(code: str, i: int) -> Optional[tuple[str, int]]:
+    """Parse a Python string literal at `i` (optional r/b/f/u prefix).
+
+    Returns (value, end) or None. f-strings keep their braces raw:
+    the interpolated text becomes part of the value the sink runs,
+    so scanning it raw is the safe reading.
+    """
+    j = i
+    while j < len(code) and code[j] in "rRbBfFuU":
+        j += 1
+    if j >= len(code) or code[j] not in "'\"":
+        return None
+    raw = "r" in code[i:j].lower()
+    q = code[j]
+    if code[j:j + 3] == q * 3:
+        k = j + 3
+        buf: list[str] = []
+        while k < len(code):
+            if code[k] == "\\" and k + 1 < len(code):
+                if raw:
+                    buf.append(code[k:k + 2])
+                    k += 2
+                else:
+                    ch, k = _py_escape(code, k)
+                    buf.append(ch)
+                continue
+            if code[k:k + 3] == q * 3:
+                return "".join(buf), k + 3
+            buf.append(code[k])
+            k += 1
+        return None
+    k = j + 1
+    buf = []
+    while k < len(code):
+        if code[k] == "\\" and k + 1 < len(code):
+            if raw:
+                buf.append(code[k:k + 2])
+                k += 2
+            else:
+                ch, k = _py_escape(code, k)
+                buf.append(ch)
+            continue
+        if code[k] == q:
+            return "".join(buf), k + 1
+        if code[k] == "\n":
+            return None
+        buf.append(code[k])
+        k += 1
+    return None
+
+
+def _parse_c_string(code: str, i: int) -> Optional[tuple[str, int]]:
+    """Parse a perl/ruby/node/php string (or JS template) at `i`.
+
+    Returns (value, end) or None. A backslash keeps its escaped char
+    (\\n -> newline, \\$ -> $); a JS ${...} interpolation stays raw,
+    since its text is interpolated into the shell command the sink
+    runs.
+    """
+    if i >= len(code) or code[i] not in "'\"`":
+        return None
+    q = code[i]
+    k = i + 1
+    buf: list[str] = []
+    while k < len(code):
+        if code[k] == "\\" and k + 1 < len(code):
+            nxt = code[k + 1]
+            buf.append({"n": "\n", "r": "\r", "t": "\t"}.get(nxt, nxt))
+            k += 2
+            continue
+        if code[k] == q:
+            return "".join(buf), k + 1
+        if q != "`" and code[k] == "\n":
+            return None
+        buf.append(code[k])
+        k += 1
+    return None
+
+
+def _parse_string_list(
+    code: str, i: int, parse_fn
+) -> Optional[tuple[str, int]]:
+    """Parse a [..] / (..) list of string literals at `i`, joined.
+
+    The program is the first element: if it is not a string literal
+    the command it runs is unknowable, so the sink is skipped. Later
+    non-string elements are skipped, not fatal.
+    """
+    close = "]" if code[i] == "[" else ")"
+    k = i + 1
+    parts: list[str] = []
+    first = True
+    while k < len(code):
+        while k < len(code) and code[k] in " \t\r\n,":
+            k += 1
+        if k < len(code) and code[k] == close:
+            return (" ".join(parts), k + 1) if parts else None
+        parsed = parse_fn(code, k)
+        if parsed is None:
+            if first:
+                return None
+            while k < len(code) and code[k] not in ",]})":
+                k += 1
+            continue
+        parts.append(parsed[0])
+        k = parsed[1]
+        first = False
+    return None
+
+
+_SINK_RES: dict[str, re.Pattern] = {
+    "python": re.compile(
+        r"\b(?:os\.system|os\.popen|subprocess\.(?:call|run|Popen|check_output|check_call|getoutput)"
+        r"|os\.exec[lv][a-z]*|os\.spawn[lv][a-z]*)\s*\("
+    ),
+    # perl/ruby/php also take a bare string argument without parens
+    # (`system "rm -rf /"`), so their patterns stop at the word.
+    "perl": re.compile(r"\b(?:system|exec)\b"),
+    "ruby": re.compile(r"\b(?:system|exec|spawn)\b"),
+    "node": re.compile(
+        r"\b(?:exec|execSync|spawn|spawnSync|execFile|execFileSync)\s*\("
+    ),
+    "php": re.compile(r"\b(?:exec|system|shell_exec|passthru|popen)\b"),
+}
+
+
+def _sink_shell_strings(lang: str, code: str) -> list[str]:
+    """Shell command strings a sink in `code` will execute.
+
+    Paren form: the first argument, string or string list. Bare form
+    (perl/ruby/php): a string argument with no parens. Backtick and
+    %x/qx forms (perl/ruby/php) are shell code directly. Anything
+    whose program is a variable is unknowable and skipped (noted
+    gap, not a claimed block).
+    """
+    out: list[str] = []
+    parse_fn = _parse_python_string if lang == "python" else _parse_c_string
+    for m in _SINK_RES[lang].finditer(code):
+        k = m.end()
+        while k < len(code) and code[k] in " \t\r\n":
+            k += 1
+        if lang in ("perl", "ruby", "php") and k < len(code) and code[k] != "(":
+            parsed = parse_fn(code, k)
+            if parsed is not None:
+                out.append(parsed[0])
+            continue
+        if lang in ("perl", "ruby", "php"):
+            # Bare-word pattern: the paren itself is still to consume.
+            if k >= len(code) or code[k] != "(":
+                continue
+            k += 1
+            while k < len(code) and code[k] in " \t\r\n":
+                k += 1
+        # python/node patterns already consumed the opening paren,
+        # so k is already inside the argument list here.
+        if k < len(code) and code[k] in "[(":
+            parsed = _parse_string_list(code, k, parse_fn)
+            if parsed is not None:
+                out.append(parsed[0])
+            continue
+        parsed = parse_fn(code, k)
+        if parsed is not None:
+            out.append(parsed[0])
+    if lang in ("perl", "ruby", "php"):
+        out.extend(_backtick_shell_strings(code, lang))
+    return out
+
+
+def _backtick_shell_strings(code: str, lang: str) -> list[str]:
+    """Shell code in backticks / %x / qx outside string literals.
+
+    A quote-aware walk: backticks inside a quoted string are literal
+    text, not execution, and stay unscanned.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(code)
+    pairs = {"[": "]", "{": "}", "(": ")", "<": ">"}
+    while i < n:
+        ch = code[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch in "'\"":
+            q = ch
+            i += 1
+            while i < n:
+                if code[i] == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                if code[i] == q:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if ch == "`":
+            j = i + 1
+            while j < n:
+                if code[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if code[j] == "`":
+                    break
+                j += 1
+            if j < n:
+                out.append(code[i + 1:j])
+            i = j + 1
+            continue
+        if (
+            (lang == "ruby" and code[i:i + 2] == "%x")
+            or (lang == "perl" and code[i:i + 2] == "qx")
+        ) and i + 2 < n:
+            d = code[i + 2]
+            if d.isalnum() or d in " \t\r\n":
+                i += 1
+                continue
+            close = pairs.get(d, d)
+            depth = 0
+            j = i + 3
+            while j < n:
+                if code[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if d in pairs:
+                    if code[j] == d:
+                        depth += 1
+                    elif code[j] == close:
+                        if depth == 0:
+                            break
+                        depth -= 1
+                elif code[j] == close:
+                    break
+                j += 1
+            if j < n:
+                out.append(code[i + 3:j])
+            i = j + 1
+            continue
+        i += 1
+    return out
+
+
+def _check_direct_wipe(lang: str, code: str, cwd: Optional[Path] = None) -> Optional[str]:
+    """Block a direct wipe call with a root/home target in `code`.
+
+    Only literal root/home targets: a named subdirectory
+    (`shutil.rmtree('/tmp/build')`) stays allowed, same as the shell
+    named-target policy. A variable target is unknowable (noted gap).
+    """
+    if lang == "python":
+        m = re.search(r"shutil\.rmtree\s*\(\s*", code)
+        if m:
+            k = m.end()
+            if re.match(r"os\.path\.expanduser\s*\(\s*['\"]~", code[k:]):
+                return "recursive delete of home dir via shutil.rmtree"
+            if re.match(r"os\.environ\s*\[\s*['\"]HOME['\"]\s*\]", code[k:]):
+                return "recursive delete of home dir via shutil.rmtree"
+            if re.match(r"os\.getenv\s*\(\s*['\"]HOME['\"]", code[k:]):
+                return "recursive delete of home dir via shutil.rmtree"
+            if re.match(r"(?:pathlib\.)?Path\.home\s*\(\s*\)", code[k:]):
+                return "recursive delete of home dir via shutil.rmtree"
+            parsed = _parse_python_string(code, k)
+            if parsed is not None and _is_wipe_target_value(parsed[0]):
+                return "recursive delete of root via shutil.rmtree"
+    elif lang == "perl":
+        m = re.search(r"(?:File::Path::)?(?:rmtree|remove_tree)\s*\(\s*", code)
+        if m:
+            k = m.end()
+            if re.match(r"\$ENV\{HOME\}", code[k:]):
+                return "recursive delete of home dir via rmtree"
+            parsed = _parse_c_string(code, k)
+            if parsed is not None and _is_wipe_target_value(parsed[0]):
+                return "recursive delete of root via rmtree"
+    elif lang == "ruby":
+        m = re.search(r"FileUtils\.(?:rm_rf|rm_r|remove_entry_secure)\s*\(?\s*", code)
+        if m:
+            k = m.end()
+            if re.match(r"Dir\.home\b", code[k:]):
+                return "recursive delete of home dir via FileUtils"
+            parsed = _parse_c_string(code, k)
+            if parsed is not None and _is_wipe_target_value(parsed[0]):
+                return "recursive delete of root via FileUtils"
+    elif lang == "node":
+        m = re.search(r"fs\.rm(?:dir)?Sync\s*\(\s*", code)
+        if m:
+            k = m.end()
+            parsed = _parse_c_string(code, k)
+            if parsed is not None and _is_wipe_target_value(parsed[0]):
+                if "recursive" in code[m.start():m.start() + 300]:
+                    return "recursive delete of root via fs.rmSync"
+    return None
+
+
+def _is_wipe_target_value(value: str) -> bool:
+    """True if a literal wipe target is root, its parent, or `..`.
+
+    A bare `~` is NOT home here: no wipe API expands it, so it names
+    a literal directory called `~`. Home only counts via expanduser /
+    $ENV{HOME} / Dir.home, handled by the caller.
+    """
+    if value.rstrip("/") == "..":
+        return True
+    return _is_wipe_root_target(value)
+
+
+def _check_interpreter_code(
+    lang: str, code: str, cwd: Optional[Path] = None, depth: int = 0
+) -> Optional[str]:
+    """Denylist pass over one interpreter code string.
+
+    Each shell string a sink will execute gets the full shell checks
+    (so `os.system("bash -c 'shutdown -h now'")` stacks through the
+    -c pass), then the direct wipe calls are checked.
+    """
+    if depth >= _NESTED_MAX_DEPTH:
+        return None
+    for shell_cmd in _sink_shell_strings(lang, code):
+        label = _check_all(shell_cmd, cwd, depth + 1)
+        if label:
+            return label
+    return _check_direct_wipe(lang, code, cwd)
+
+
+def _check_interpreter_strings(
+    command: str, cwd: Optional[Path] = None, depth: int = 0
+) -> Optional[str]:
+    """Denylist pass over every interpreter code string in `command`.
+
+    A variable-only code string resolves from a literal assignment
+    in the same command or is blocked as opaque, exactly like the
+    shell -c case.
+    """
+    if depth >= _NESTED_MAX_DEPTH:
+        return None
+    for lang, code in _extract_interpreter_code(command):
+        resolved = _variable_only_resolution(code, command)
+        if resolved is not None:
+            kind, value = resolved
+            if kind == "opaque":
+                return "opaque interpreter code string (variable value not visible)"
+            code = value
+        label = _check_interpreter_code(lang, code, cwd, depth + 1)
+        if label:
+            return label
+    return None
+
+
+# --- heredocs / herestrings ----------------------------------------------------
+
+def _extract_heredocs(command: str) -> list[tuple[str, str]]:
+    """(kind, body) for every heredoc / herestring in `command`.
+
+    Quote-aware: a `<<` inside quotes is text, not a redirect. For
+    `<<[-]DELIM` the body is the lines up to the line that is exactly
+    DELIM (leading tabs stripped for `<<-`); for `<<< word` the body
+    is the decoded word. An unterminated heredoc takes the rest.
+    """
+    out: list[tuple[str, str]] = []
+    n = len(command)
+    i = 0
+    while i < n:
+        ch = command[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'":
+            i = _skip_squote(command, i)
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n:
+                if command[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if command[j] == '"':
+                    j += 1
+                    break
+                j += 1
+            i = j
+            continue
+        if ch == "$" and i + 1 < n and command[i + 1] == "'":
+            i = _skip_ansi_c(command, i)
+            continue
+        if ch == "<" and i + 1 < n and command[i + 1] == "<":
+            if i + 2 < n and command[i + 2] == "<":
+                j = i + 3
+                while j < n and command[j] in " \t":
+                    j += 1
+                if j < n:
+                    end = _word_end(command, j)
+                    toks = _tokens(command[j:end])
+                    if toks:
+                        out.append(("herestring", toks[0]))
+                    i = end
+                else:
+                    i = n
+                continue
+            j = i + 2
+            strip_tabs = False
+            if j < n and command[j] == "-":
+                strip_tabs = True
+                j += 1
+            while j < n and command[j] in " \t":
+                j += 1
+            if j >= n:
+                i = n
+                continue
+            end = _word_end(command, j)
+            toks = _tokens(command[j:end])
+            if not toks or not toks[0]:
+                i = end
+                continue
+            delim = toks[0]
+            nl = command.find("\n", end)
+            if nl == -1:
+                out.append(("heredoc", ""))
+                i = n
+                continue
+            body_lines: list[str] = []
+            pos = nl + 1
+            after = n
+            while True:
+                eol = command.find("\n", pos)
+                line = command[pos:] if eol == -1 else command[pos:eol]
+                cmp_line = line.lstrip("\t") if strip_tabs else line
+                if cmp_line.rstrip("\r") == delim:
+                    after = n if eol == -1 else eol + 1
+                    break
+                body_lines.append(line)
+                if eol == -1:
+                    after = n
+                    break
+                pos = eol + 1
+            out.append(("heredoc", "\n".join(body_lines)))
+            i = after
+            continue
+        i += 1
+    return out
+
+
+def _filter_redirect_words(args: list[str]) -> list[str]:
+    """Drop heredoc/herestring operators (and their words) from args.
+
+    A standalone `<<` / `<<<` / `<` / `>` takes the following word
+    (delimiter / file); an attached form (`<<EOF`, `<<<'...'`)
+    carries it in the same word.
+    """
+    out: list[str] = []
+    k = 0
+    while k < len(args):
+        a = args[k]
+        if a in ("<<", "<<-", "<<<", "<", ">", ">>", ">&", "<&"):
+            k += 2
+            continue
+        if a.startswith("<<"):
+            k += 1
+            continue
+        out.append(a)
+        k += 1
+    return out
+
+
+def _stdin_kind(base: str, args: list[str]) -> Optional[str]:
+    """'shell' / lang if this interpreter reads its program from stdin.
+
+    No code flag, no module flag, and no script-file argument: the
+    first remaining non-flag word is a script file, so the stdin
+    that follows is data to that script, not a program. `-` (and
+    bash `-s`, including combined `-xs`) mean stdin explicitly, and
+    anything after them is positional params, not a script file.
+    """
+    if base in _SHELL_COMMAND_STRINGS:
+        kind = "shell"
+        code_letters = {"c"}
+        value_flags: set[str] = {"-o"}
+    elif base in _NAME_TO_LANG:
+        kind = _NAME_TO_LANG[base]
+        spec = _INTERPRETERS[kind]
+        code_letters = spec["code_letters"]
+        value_flags = spec["value_flags"]
+    else:
+        return None
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            return kind if i + 1 >= len(args) else None
+        if kind == "php" and (a == "-f" or (a.startswith("-f") and len(a) > 2)):
+            return None
+        if a in ("-",) or (kind == "shell" and a == "-s"):
+            return kind
+        if a.startswith("-") and a != "-" and not a.startswith("--"):
+            if a[-1] in code_letters:
+                return None
+            if a[1] in code_letters:
+                return None
+            if kind == "shell" and "s" in a[1:]:
+                return kind
+            if a in value_flags:
+                i += 2
+                continue
+            if any(a.startswith(vf) and len(a) > len(vf) for vf in value_flags):
+                i += 1
+                continue
+            i += 1
+            continue
+        if a.startswith("--"):
+            i += 1
+            continue
+        return None
+    return kind
+
+
+def _stdin_consumers(command: str) -> set[str]:
+    """Interpreter kinds in `command` that read a program from stdin."""
+    kinds: set[str] = set()
+    for segment in _split_top_level(command):
+        words = _segment_words(segment)
+        if not words:
+            continue
+        cmd_idx = _skip_wrappers(words)
+        if cmd_idx is None:
+            continue
+        base = words[cmd_idx][1].rsplit("/", 1)[-1]
+        args = _filter_redirect_words([w[1] for w in words[cmd_idx + 1:]])
+        kind = _stdin_kind(base, args)
+        if kind is not None:
+            kinds.add(kind)
+    return kinds
+
+
+def _check_heredocs(
+    command: str, cwd: Optional[Path] = None, depth: int = 0
+) -> Optional[str]:
+    """Denylist pass over heredoc/herestring bodies fed to interpreters.
+
+    A body is only scanned when some segment's interpreter reads
+    stdin (same segment, or downstream of a pipe like `cat <<EOF |
+    bash`); bodies fed to anything else are data and stay unscanned.
+    A shell body gets the full shell checks; a code body gets the
+    interpreter-code checks.
+    """
+    if depth >= _NESTED_MAX_DEPTH:
+        return None
+    bodies = _extract_heredocs(command)
+    if not bodies:
+        return None
+    kinds = _stdin_consumers(command)
+    if not kinds:
+        return None
+    for _kind, body in bodies:
+        if not body.strip():
+            continue
+        # <<- strips leading tabs before the interpreter sees the
+        # body, and leading whitespace before a command is ignored
+        # generally, so scan the dedented body: otherwise a
+        # tab-indented `shutdown` slips past the anchored regex.
+        # Dedenting only adds blocks; the body itself is unchanged.
+        scan_body = "\n".join(ln.lstrip(" \t") for ln in body.split("\n"))
+        if "shell" in kinds:
+            label = _check_all(scan_body, cwd, depth + 1)
+            if label:
+                return label
+        for lang in kinds:
+            if lang == "shell":
+                continue
+            label = _check_interpreter_code(lang, scan_body, cwd, depth + 1)
+            if label:
+                return label
+    return None
+
+
+def _check_all(command: str, cwd: Optional[Path] = None, depth: int = 0) -> Optional[str]:
+    """Every denylist pass over `command`, recursing into sub-strings.
+
+    Raw, then command-word-normalized, then nested groups, -c /
+    eval strings, interpreter code strings, and heredoc bodies —
+    each pass only adds blocks. Sub-passes are depth-capped and
+    every sub-string they recurse into is strictly shorter than its
+    parent, so recursion always terminates.
+    """
+    label = _check_dangerous_once(command, cwd)
+    if label:
+        return label
+    normalized = _normalize_command(command)
+    if normalized != command:
+        label = _check_dangerous_once(normalized, cwd)
+        if label:
+            return label
+    label = _check_nested(command, cwd, depth)
+    if label:
+        return label
+    label = _check_command_strings(command, cwd, depth)
+    if label:
+        return label
+    label = _check_interpreter_strings(command, cwd, depth)
+    if label:
+        return label
+    return _check_heredocs(command, cwd, depth)
 
 
 def _check_dangerous_once(command: str, cwd: Optional[Path] = None) -> Optional[str]:
@@ -1338,29 +2265,20 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     `find . -delete`) are blocked too; in a subdirectory they stay
     allowed. Pass no cwd to skip only that workdir-root rule.
 
-    Four passes: the raw command first, then (v1.8.0) the same checks
-    on the command with each segment's command word decoded, so a
-    fragmented command name (`r\\m -rf /`) is caught exactly like
-    the plain spelling, then (v1.9.0) the same checks over every
-    command hidden inside a substitution, subshell, or process
-    substitution, recursively, then (v1.10.0) the same checks over
-    every command string passed to bash/sh -c or eval, recursively.
-    Each pass can only add blocks.
+    Passes (each only adds blocks): the raw command first, then
+    (v1.8.0) the same checks on the command with each segment's
+    command word decoded, so a fragmented command name (`r\\m -rf
+    /`) is caught exactly like the plain spelling, then (v1.9.0)
+    the same checks over every command hidden inside a
+    substitution, subshell, or process substitution, recursively,
+    then (v1.10.0) the same checks over every command string passed
+    to bash/sh -c or eval, recursively, then (v1.11.0) the same
+    checks over interpreter code strings, variable-resolved command
+    strings, and heredoc/herestring bodies fed to interpreters.
     """
     if ALLOW_DANGEROUS:
         return None
-    label = _check_dangerous_once(command, cwd)
-    if label:
-        return label
-    normalized = _normalize_command(command)
-    if normalized != command:
-        label = _check_dangerous_once(normalized, cwd)
-        if label:
-            return label
-    label = _check_nested(command, cwd)
-    if label:
-        return label
-    return _check_command_strings(command, cwd)
+    return _check_all(command, cwd)
 
 
 # ---------------------------------------------------------------------------
