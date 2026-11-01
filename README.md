@@ -119,6 +119,8 @@ Read this before running it:
   allowed, as does deleting one named sibling (`rm -rf ../build`).
   With cwd at the workdir base, wipe-everything targets (`rm -rf *`,
   `find . -delete`) are blocked too; in a subdirectory they stay allowed.
+  Power commands on later lines of a multiline command are blocked as
+  well; heredoc bodies fed to `cat` or a script file stay allowed data.
   The phone app shows the block reason. Set `LR_ALLOW_DANGEROUS=1` on
   the server to turn this off.
 - Every command is audit-logged with timestamp, client IP, working dir,

@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.11.0"
+VERSION = "1.12.0"
 
 
 # ---------------------------------------------------------------------------
@@ -2207,13 +2207,223 @@ def _check_heredocs(
     return None
 
 
+# ---------------------------------------------------------------------------
+# v1.12.0: power commands on later lines of a plain multiline command
+# ---------------------------------------------------------------------------
+# The power-control regex is anchored to the start of the string or
+# to a ; && || | separator, so `echo hi\nshutdown` sailed through:
+# the shell runs each line of a multiline command in turn, but the
+# denylist only saw a command position at the start of the string.
+# Fix: scan the command line by line for a power word in command
+# position, skipping lines that are not executed as commands:
+# heredoc bodies (data unless fed to an interpreter, which the
+# heredoc pass already scans), lines inside a multiline quoted
+# string, and continuations joined by a trailing backslash. A
+# backslash-newline joins lines before the shell splits commands, so
+# `echo foo \\\nshutdown` is one echo with `shutdown` as an argument
+# and stays allowed. The first word is decoded the way the shell
+# decodes it (quotes/backslashes via _tokens), so `"shutdown"` and
+# `shut\\down` on a later line are caught exactly like the plain
+# spelling. Only the power words are checked here: rm and friends
+# match unanchored anywhere, so they never needed line starts.
+
+_POWER_WORDS = {"shutdown", "reboot", "halt", "poweroff"}
+
+
+def _power_first_word(line: str) -> bool:
+    """True if `line` starts with a power command (or sudo + one).
+
+    Mirrors the anchored regex's bare-`sudo` allowance: `sudo -u
+    root reboot` is not caught here, exactly as it is not caught at
+    the start of the string. A power word as part of a longer word
+    (`shutdown_cmd=...`) or as an argument (`grep reboot`) is not a
+    command position and stays allowed.
+    """
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return False
+    m = re.match(
+        r"(sudo\s+)?(shutdown|reboot|halt|poweroff)(?![A-Za-z0-9_])",
+        stripped,
+        re.IGNORECASE,
+    )
+    if m:
+        return True
+    # Quoted or backslash-fragmented first word: decode it the way
+    # the shell does and compare that. A trailing separator on the
+    # decoded word (`"shutdown";`) is not part of the command name.
+    words = _tokens(stripped)
+    if not words:
+        return False
+    first = words[0].lower().rstrip(";|&")
+    if first in _POWER_WORDS:
+        return True
+    if first == "sudo" and len(words) > 1:
+        second = words[1].lower().rstrip(";|&")
+        if second in _POWER_WORDS:
+            return True
+    return False
+
+
+def _check_multiline_power(command: str) -> Optional[str]:
+    """Block a power command on a later line of a multiline command.
+
+    Walks the command's physical lines tracking multiline quote
+    state, arithmetic depth (so `<<` inside `$((1<<2))` is a shift,
+    not a heredoc), and pending heredoc delimiters (so a body line
+    is data, not a command). Lines joined by a trailing backslash
+    outside quotes are one logical line. Each completed logical
+    line is checked for a power word in first position.
+    """
+    quote: Optional[str] = None  # None, "sq", "dq", "ansi" ($'..'), "dsq" ($"..)
+    heredocs: list[tuple[str, bool]] = []  # (delimiter, <<- strips tabs)
+    arith = 0
+    cur = ""
+    cur_open = False  # True once cur holds an unfinished logical line
+    last_was_body = False
+
+    def check_cur() -> Optional[str]:
+        if cur_open and _power_first_word(cur):
+            return "system power control"
+        return None
+
+    for raw_line in command.split("\n"):
+        raw = raw_line[:-1] if raw_line.endswith("\r") else raw_line
+        if heredocs:
+            # Entering the body ends the operator line's logical
+            # line: check it now, or a power word on the operator
+            # line itself would never be finalized if the command
+            # ends inside the body.
+            if cur_open and quote is None:
+                label = check_cur()
+                if label:
+                    return label
+                cur_open = False
+            delim, dash = heredocs[0]
+            cand = raw.lstrip("\t") if dash else raw
+            if cand == delim:
+                heredocs.pop(0)
+            # Body lines (and the delimiter line itself) are not
+            # commands; the logical line before the body already
+            # ended at the previous boundary.
+            last_was_body = True
+            continue
+        # A logical line ends at this boundary unless the previous
+        # line continues it (open quote, or a trailing backslash
+        # outside quotes joining the next line).
+        if cur_open and quote is None and not _continues(cur):
+            label = check_cur()
+            if label:
+                return label
+            cur_open = False
+        if not cur_open:
+            cur = raw
+            cur_open = True
+        else:
+            cur += raw
+        last_was_body = False
+        # Scan this line for quote changes, arithmetic depth, and
+        # heredoc operators. Quote state and arithmetic depth carry
+        # across lines; heredoc bodies start on the NEXT line.
+        i = 0
+        n = len(raw)
+        while i < n:
+            if quote is not None:
+                ch = raw[i]
+                if quote == "sq":
+                    if ch == "'":
+                        quote = None
+                    i += 1
+                else:
+                    if ch == "\\" and i + 1 < n:
+                        i += 2
+                    elif (quote == "dq" and ch == '"') or (
+                        quote == "ansi" and ch == "'"
+                    ) or (quote == "dsq" and ch == '"'):
+                        quote = None
+                        i += 1
+                    else:
+                        i += 1
+                continue
+            ch = raw[i]
+            if ch == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if ch == "'":
+                quote = "sq"
+                i += 1
+                continue
+            if ch == '"':
+                quote = "dq"
+                i += 1
+                continue
+            if ch == "$" and i + 1 < n and raw[i + 1] == "'":
+                quote = "ansi"
+                i += 2
+                continue
+            if ch == "$" and i + 1 < n and raw[i + 1] == '"':
+                quote = "dsq"
+                i += 2
+                continue
+            if ch == "#" and (i == 0 or raw[i - 1] in " \t;&|()"):
+                break
+            if raw[i:i + 2] == "((":
+                arith += 1
+                i += 2
+                continue
+            if raw[i:i + 2] == "))" and arith > 0:
+                arith -= 1
+                i += 2
+                continue
+            if ch == "<" and raw[i:i + 3] == "<<<":
+                i += 3
+                continue
+            if ch == "<" and raw[i:i + 2] == "<<" and arith == 0:
+                j = i + 2
+                dash = False
+                if j < n and raw[j] == "-":
+                    dash = True
+                    j += 1
+                while j < n and raw[j] in " \t":
+                    j += 1
+                if j < n and raw[j] in "'\"":
+                    q = raw[j]
+                    k = raw.find(q, j + 1)
+                    if k != -1 and k > j + 1:
+                        heredocs.append((raw[j + 1:k], dash))
+                        i = k + 1
+                        continue
+                k = j
+                while k < n and (raw[k].isalnum() or raw[k] in "_-."):
+                    k += 1
+                if k > j:
+                    heredocs.append((raw[j:k], dash))
+                    i = k
+                    continue
+                i += 2
+                continue
+            i += 1
+    if not last_was_body:
+        return check_cur()
+    return None
+
+
+def _continues(line: str) -> bool:
+    """True if `line` ends with an odd run of backslashes: the final
+    backslash escapes the newline, joining the next line to this
+    one before the shell splits commands."""
+    count = len(line) - len(line.rstrip("\\"))
+    return count % 2 == 1
+
+
 def _check_all(command: str, cwd: Optional[Path] = None, depth: int = 0) -> Optional[str]:
     """Every denylist pass over `command`, recursing into sub-strings.
 
     Raw, then command-word-normalized, then nested groups, -c /
-    eval strings, interpreter code strings, and heredoc bodies —
-    each pass only adds blocks. Sub-passes are depth-capped and
-    every sub-string they recurse into is strictly shorter than its
+    eval strings, interpreter code strings, heredoc bodies, and
+    power words on later lines of a multiline command — each pass
+    only adds blocks. Sub-passes are depth-capped and every
+    sub-string they recurse into is strictly shorter than its
     parent, so recursion always terminates.
     """
     label = _check_dangerous_once(command, cwd)
@@ -2233,7 +2443,10 @@ def _check_all(command: str, cwd: Optional[Path] = None, depth: int = 0) -> Opti
     label = _check_interpreter_strings(command, cwd, depth)
     if label:
         return label
-    return _check_heredocs(command, cwd, depth)
+    label = _check_heredocs(command, cwd, depth)
+    if label:
+        return label
+    return _check_multiline_power(command)
 
 
 def _check_dangerous_once(command: str, cwd: Optional[Path] = None) -> Optional[str]:
@@ -2274,7 +2487,9 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     then (v1.10.0) the same checks over every command string passed
     to bash/sh -c or eval, recursively, then (v1.11.0) the same
     checks over interpreter code strings, variable-resolved command
-    strings, and heredoc/herestring bodies fed to interpreters.
+    strings, and heredoc/herestring bodies fed to interpreters,
+    then (v1.12.0) a heredoc-aware line scan for power commands on
+    later lines of a plain multiline command.
     """
     if ALLOW_DANGEROUS:
         return None

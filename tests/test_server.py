@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.11.0"
+    assert r.json()["version"] == "1.12.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1162,4 +1162,78 @@ def test_dangerous_blocked_v111(client, command):
     ],
 )
 def test_benign_still_allowed_v111(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# ---------------------------------------------------------------------------
+# v1.12.0: power commands on later lines of a plain multiline command
+# ---------------------------------------------------------------------------
+# The power-control regex was anchored to the start of the string or
+# to a ; && || | separator, so a power command on a later line of a
+# multiline command (`echo hi\nshutdown`) ran unblocked: the shell
+# runs each line in turn, but the denylist saw no command position
+# there. A heredoc-aware line scan closes it. Lines that are not
+# executed commands stay allowed: heredoc bodies fed to cat or a
+# named script (data, not code), lines inside a multiline quoted
+# string, and a line joined to the previous one by a trailing
+# backslash (where the power word is an argument, not a command).
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo hi\nshutdown",
+        "echo hi\nshutdown -h now",
+        "echo hi\nsudo reboot",
+        "echo hi\n  halt",
+        "echo hi\npoweroff",
+        "echo hi\nSHUTDOWN",
+        "ls /tmp\nreboot",
+        # Quoted and backslash-fragmented first words decode to the
+        # same command the shell would run.
+        'echo hi\n"shutdown"',
+        "echo hi\nshut\\down",
+        # A later line inside a multiline control structure, and a
+        # power command on a later line of an interpreter heredoc
+        # body or a multiline substitution, both previously missed.
+        "if true; then\nshutdown\nfi",
+        "bash <<'EOF'\necho hi\nshutdown -h now\nEOF",
+        "echo $(\necho hi\nshutdown\n)",
+        # A power word on a heredoc operator line itself, and a
+        # command on the first line after a heredoc ends.
+        "echo hi\nshutdown <<'EOF'\nhello\nEOF",
+        "cat <<'EOF'\nhello\nEOF\nreboot",
+    ],
+)
+def test_dangerous_blocked_v112(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Backslash-newline joins the lines first: `shutdown` is an
+        # argument to echo, not a command.
+        "echo foo \\\nshutdown",
+        # A power word inside a multiline quoted string is content.
+        'echo "foo\nshutdown"',
+        # Heredoc bodies fed to cat or a named script are data, even
+        # when a body line starts with a power word.
+        "cat <<'EOF'\nshutdown\nEOF",
+        "bash script.sh <<'EOF'\nshutdown -h now\nEOF",
+        "cat <<EOF\nshutdown\nEOF",
+        "cat <<-EOF\n\tshutdown\n\tEOF",
+        # Benign later lines: plain commands, power words as
+        # arguments, power prefixes in longer words, comments.
+        "echo hi\nls /tmp",
+        "echo hi\ngrep -r reboot /tmp",
+        "echo hi\nshutdown_cmd=echo",
+        "echo hi\n# shutdown",
+        # A shift inside $(( )) is not a heredoc: the line after it
+        # is still a command line, but the shift line itself is not.
+        "echo $((1<<2))\nls /tmp",
+    ],
+)
+def test_benign_still_allowed_v112(client, command):
     assert server.check_dangerous(command) is None, command
