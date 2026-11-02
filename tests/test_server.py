@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.12.0"
+    assert r.json()["version"] == "1.13.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1236,4 +1236,143 @@ def test_dangerous_blocked_v112(client, command):
     ],
 )
 def test_benign_still_allowed_v112(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# v1.13.0: power commands in any command position
+# ---------------------------------------------------------------------------
+# The power-control regex only saw a power word at the start of the
+# string or right after a separator, and v1.12.0 only added later
+# lines. A power word in any other command position sailed through:
+# behind a wrapper (`time` / `command` / `env` / `nice` / `nohup` /
+# `timeout` / `sudo` with flags / `exec` / `coproc` / `busybox`),
+# after a control keyword (`if` / `while` / `until` / `then` / `do`
+# / `else` / `elif`), inside a brace group or function body, after
+# a case pattern, or as a find -exec command. The shell runs all of
+# those as the power command, so a command-position scan closes
+# them. Words that merely mention a power command stay allowed:
+# arguments, patterns, variable names, assignments, and the
+# non-executing wrapper forms (`command -v`, `sudo -l`, `builtin`
+# which bash refuses for non-builtins).
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Wrappers: the wrapper runs its command, flags and all.
+        "time reboot",
+        "time -p reboot",
+        "command reboot",
+        "command -p reboot",
+        "command -- reboot",
+        "env reboot",
+        "env -i reboot",
+        "env FOO=bar reboot",
+        "env -u FOO reboot",
+        "env -S reboot",
+        "env -S 'FOO=bar reboot'",
+        "env -S 'sudo reboot'",
+        "nice reboot",
+        "nice -n 5 reboot",
+        "nice --adjustment=5 reboot",
+        "nohup reboot",
+        "nohup -- reboot",
+        "timeout 5 reboot",
+        "timeout --signal=KILL 5 reboot",
+        "timeout -s KILL 5 reboot",
+        "timeout -k 2 5 reboot",
+        "sudo -n reboot",
+        "sudo -u root reboot",
+        "sudo -- reboot",
+        "sudo -u root -n reboot",
+        "exec reboot",
+        "exec -a foo reboot",
+        "busybox reboot",
+        "coproc reboot",
+        "coproc foo reboot",
+        # Chained wrappers resolve to the same command.
+        "sudo sudo reboot",
+        "time sudo reboot",
+        "env -i sudo reboot",
+        "sudo time reboot",
+        # Quoted / backslash-fragmented power words decode first.
+        'time "reboot"',
+        "time reb\\oot",
+        'sudo "reboot"',
+        # Control keywords: conditions and bodies execute.
+        "if true; then reboot; fi",
+        "if true; then shutdown -h now; fi",
+        "if true; then sudo reboot; fi",
+        "if reboot; then echo; fi",
+        "while true; do reboot; done",
+        "until false; do reboot; done",
+        "for i in x; do reboot; done",
+        "if true; then time reboot; fi",
+        "if true; then sudo -n reboot; fi",
+        # Brace groups and function bodies execute their commands.
+        "f() { reboot; }; f",
+        "f() { reboot; }",
+        "{ reboot; }",
+        "{ echo hi; reboot; }",
+        # Case arms and find -exec are command positions too.
+        "case $x in foo) reboot;; esac",
+        "find . -exec reboot \\;",
+        "find . -exec sudo reboot \\;",
+        "sudo find . -exec reboot \\;",
+        # Assignment prefixes do not hide the command.
+        "FOO=bar reboot",
+        "FOO=bar time reboot",
+        # Negation, pipelines, and nesting recurse as usual.
+        "! reboot",
+        "! time reboot",
+        "time reboot && echo hi",
+        "echo a && time reboot",
+        "echo $(time reboot)",
+        "bash -c 'time reboot'",
+    ],
+)
+def test_dangerous_blocked_v113(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Non-executing wrapper forms: describe, list, or refuse.
+        "command -v reboot",
+        "command -V reboot",
+        "command -v reboot; ls",
+        "sudo -l reboot",
+        "sudo -e reboot",
+        "builtin reboot",
+        # Power words as arguments, patterns, names, or values.
+        "echo reboot",
+        "grep -r reboot /tmp",
+        "myreboot",
+        "reboot_cmd",
+        "VAR=reboot",
+        "echo 'then reboot'",
+        'echo "then reboot"',
+        "if true; then echo reboot; fi",
+        "f() { echo reboot; }",
+        "time echo reboot",
+        "echo time reboot",
+        "case $x in reboot) echo hi;; esac",
+        "for reboot in x; do echo; done",
+        "find . -exec echo reboot \\;",
+        "echo find -exec reboot",
+        # Wrappers running harmless commands stay allowed.
+        "time ls",
+        "env ls",
+        "sudo ls",
+        "sudo -u root ls",
+        "timeout 5 ls",
+        "nice ls",
+        "nohup ls",
+        "timeout 5",
+        "env FOO=bar",
+    ],
+)
+def test_benign_still_allowed_v113(client, command):
     assert server.check_dangerous(command) is None, command

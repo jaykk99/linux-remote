@@ -40,14 +40,14 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.12.0"
+VERSION = "1.13.0"
 
 
 # ---------------------------------------------------------------------------
@@ -2265,15 +2265,19 @@ def _power_first_word(line: str) -> bool:
     return False
 
 
-def _check_multiline_power(command: str) -> Optional[str]:
-    """Block a power command on a later line of a multiline command.
+def _logical_command_lines(command: str) -> Iterator[str]:
+    """Logical command lines of `command`, excluding heredoc bodies.
 
     Walks the command's physical lines tracking multiline quote
     state, arithmetic depth (so `<<` inside `$((1<<2))` is a shift,
     not a heredoc), and pending heredoc delimiters (so a body line
     is data, not a command). Lines joined by a trailing backslash
     outside quotes are one logical line. Each completed logical
-    line is checked for a power word in first position.
+    line is yielded in order, including heredoc operator lines (when
+    their body starts); heredoc body lines and delimiter lines are
+    never yielded. v1.12.0's multiline power scan and v1.13.0's
+    command-position scan both walk these lines, so both agree on
+    what counts as a command.
     """
     quote: Optional[str] = None  # None, "sq", "dq", "ansi" ($'..'), "dsq" ($"..)
     heredocs: list[tuple[str, bool]] = []  # (delimiter, <<- strips tabs)
@@ -2282,22 +2286,15 @@ def _check_multiline_power(command: str) -> Optional[str]:
     cur_open = False  # True once cur holds an unfinished logical line
     last_was_body = False
 
-    def check_cur() -> Optional[str]:
-        if cur_open and _power_first_word(cur):
-            return "system power control"
-        return None
-
     for raw_line in command.split("\n"):
         raw = raw_line[:-1] if raw_line.endswith("\r") else raw_line
         if heredocs:
             # Entering the body ends the operator line's logical
-            # line: check it now, or a power word on the operator
+            # line: yield it now, or a power word on the operator
             # line itself would never be finalized if the command
             # ends inside the body.
             if cur_open and quote is None:
-                label = check_cur()
-                if label:
-                    return label
+                yield cur
                 cur_open = False
             delim, dash = heredocs[0]
             cand = raw.lstrip("\t") if dash else raw
@@ -2312,9 +2309,7 @@ def _check_multiline_power(command: str) -> Optional[str]:
         # line continues it (open quote, or a trailing backslash
         # outside quotes joining the next line).
         if cur_open and quote is None and not _continues(cur):
-            label = check_cur()
-            if label:
-                return label
+            yield cur
             cur_open = False
         if not cur_open:
             cur = raw
@@ -2403,8 +2398,20 @@ def _check_multiline_power(command: str) -> Optional[str]:
                 i += 2
                 continue
             i += 1
-    if not last_was_body:
-        return check_cur()
+    if not last_was_body and cur_open:
+        yield cur
+
+
+def _check_multiline_power(command: str) -> Optional[str]:
+    """Block a power command on a later line of a multiline command.
+
+    Each logical line from _logical_command_lines is checked for a
+    power word in first position; heredoc bodies are data, not
+    commands, and are never checked here.
+    """
+    for line in _logical_command_lines(command):
+        if _power_first_word(line):
+            return "system power control"
     return None
 
 
@@ -2416,13 +2423,400 @@ def _continues(line: str) -> bool:
     return count % 2 == 1
 
 
+# ---------------------------------------------------------------------------
+# v1.13.0: power commands in any command position
+# ---------------------------------------------------------------------------
+# The power-control regex only saw a power word at the start of the
+# string or right after a ; && || | separator, and v1.12.0 only
+# added later lines of a multiline command. A power word in any
+# other command position sailed through: behind a wrapper (`time`,
+# `command`, `env`, `nice`, `nohup`, `timeout`, `sudo` with flags,
+# `exec`, `coproc`, `busybox`), after a control keyword (`if`,
+# `while`, `until`, `then`, `do`, `else`, `elif`), inside a brace
+# group or function body, after a case pattern, or as a find -exec
+# command. The shell runs all of those as the power command, so
+# this pass walks each logical line's decoded words tracking
+# command position: a word counts only when it IS the command, never
+# when it is an argument, a pattern, a variable name, or an
+# assignment value. Non-executing wrapper forms stay allowed:
+# `command -v` / `-V` only describe a command, `sudo -l` / `-e` /
+# `-v` / `-h` only list, edit, or validate, and `builtin` refuses a
+# power word outright (verified: bash reports "not a shell
+# builtin"), so none of them can run it. A bare function definition
+# (`f() { reboot; }` with no call) is blocked too: the body is a
+# loaded command waiting for a call, and the denylist blocks the
+# pattern, not the call site. Subshells, substitutions, -c strings,
+# and interpreter strings recurse through _check_all, so this pass
+# covers them without special-casing. This pass can only add
+# blocks, never remove one.
+
+# Words after which the next word is still a command position:
+# control keywords whose condition or body executes, group openers,
+# and negation. `for` / `select` are deliberately absent: the word
+# after them is a loop variable name, not a command.
+_POWER_POSITION_KEYWORDS = {
+    "then", "do", "else", "elif", "if", "while", "until", "{", "(", "!",
+}
+
+# Wrappers that run the command word found after their flags.
+_POWER_WRAPPERS = {
+    "time", "command", "env", "nice", "nohup", "timeout", "sudo",
+    "exec", "coproc", "busybox",
+}
+
+# Sudo long flags that take a separate value word.
+_SUDO_VALUE_LONGS = {
+    "--user", "--group", "--prompt", "--chdir", "--role", "--type",
+    "--close-from", "--timestamp-timeout", "--command-timeout",
+}
+# Sudo short flag letters: mode letters never run a command,
+# value letters consume the rest of the cluster or the next word.
+_SUDO_MODE_LETTERS = set("hlveV")
+_SUDO_VALUE_LETTERS = set("ugptC")
+
+
+# A function definition's head: `f()`, `f(){`, `f()(` — the word
+# after it is the body, a command position. Anything else ending in
+# `)` (a substitution, a subshell word) is not: `$(echo ls)
+# reboot` runs ls with reboot as its argument, not reboot itself.
+_FUNC_DEF_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\(\)[{(]?")
+
+
+def _power_wrapper_command(
+    words: list[str], i: int, depth: int = 0
+) -> tuple[str, Optional[int]]:
+    """Resolve the wrapper at words[i] to what it runs.
+
+    Returns ("cmd", j) when words[j] is the command word (re-process
+    it at command position, so chained wrappers compose), ("args",
+    None) when the wrapper runs no command (a non-executing mode, or
+    the words run out), and ("block", None) when the wrapper's own
+    argument is itself a power command (`env -S reboot`: the -S
+    string is split and executed by env).
+    """
+    wrapper = words[i]
+    j = i + 1
+    if wrapper == "time":
+        while j < len(words) and words[j] == "-p":
+            j += 1
+    elif wrapper == "command":
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("-") and tok != "-":
+                if any(c in "vV" for c in tok[1:]):
+                    return ("args", None)
+                j += 1
+                continue
+            break
+    elif wrapper == "env":
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("-") and tok != "-":
+                if tok in ("-u", "-C", "-S"):
+                    if j + 1 >= len(words):
+                        return ("args", None)
+                    if tok == "-S" and _split_string_runs_power(
+                        words[j + 1], depth + 1
+                    ):
+                        return ("block", None)
+                    j += 2
+                    continue
+                if tok.startswith("-S") and len(tok) > 2:
+                    if _split_string_runs_power(tok[2:], depth + 1):
+                        return ("block", None)
+                    j += 1
+                    continue
+                if tok.startswith("-u") and len(tok) > 2:
+                    j += 1
+                    continue
+                if tok.startswith("-C") and len(tok) > 2:
+                    j += 1
+                    continue
+                if tok in _SUDO_VALUE_LONGS or tok.startswith("--"):
+                    if tok in ("--unset", "--chdir", "--split-string"):
+                        j += 2
+                    else:
+                        j += 1
+                    continue
+                j += 1
+                continue
+            if _ASSIGN_RE.match(tok):
+                j += 1
+                continue
+            break
+    elif wrapper == "nice":
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("-") and tok != "-":
+                if tok == "-n" or tok == "--adjustment":
+                    j += 2
+                elif tok.startswith("--adjustment="):
+                    j += 1
+                elif tok.startswith("-n") and len(tok) > 2:
+                    j += 1
+                elif re.fullmatch(r"-\d+", tok):
+                    j += 1
+                else:
+                    j += 1
+                continue
+            break
+    elif wrapper == "nohup":
+        while j < len(words) and words[j] in ("--", "--help", "--version"):
+            j += 1
+    elif wrapper == "timeout":
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("--"):
+                if tok in ("--signal", "--kill-after"):
+                    j += 2
+                else:
+                    j += 1
+                continue
+            if tok.startswith("-") and tok != "-":
+                k = 1
+                consumed_value = False
+                while k < len(tok):
+                    if tok[k] in "sk":
+                        j += 1 if k + 1 < len(tok) else 2
+                        consumed_value = True
+                        break
+                    k += 1
+                if not consumed_value:
+                    j += 1
+                continue
+            break
+        # The first non-flag word is the duration, not the command.
+        if j < len(words):
+            j += 1
+    elif wrapper == "sudo":
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("--"):
+                if tok in ("--list", "--validate", "--edit", "--help"):
+                    return ("args", None)
+                if tok in _SUDO_VALUE_LONGS:
+                    j += 2
+                else:
+                    j += 1
+                continue
+            if tok.startswith("-") and tok != "-":
+                k = 1
+                value_taken = False
+                while k < len(tok):
+                    c = tok[k]
+                    if c in _SUDO_MODE_LETTERS:
+                        return ("args", None)
+                    if c in _SUDO_VALUE_LETTERS:
+                        j += 1 if k + 1 < len(tok) else 2
+                        value_taken = True
+                        break
+                    k += 1
+                if not value_taken:
+                    j += 1
+                continue
+            if _ASSIGN_RE.match(tok):
+                j += 1
+                continue
+            break
+    elif wrapper == "exec":
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("-") and tok != "-":
+                if tok == "-a":
+                    j += 2
+                elif tok.startswith("-a") and len(tok) > 2:
+                    j += 1
+                else:
+                    j += 1
+                continue
+            break
+    elif wrapper == "coproc":
+        # `coproc CMD` runs CMD; `coproc NAME CMD ...` names the
+        # coproc NAME and runs CMD. Count the words up to the first
+        # separator-terminated word: one word is the command, two
+        # or more means the first is the name.
+        count = 0
+        k = j
+        while k < len(words):
+            count += 1
+            if words[k] != words[k].rstrip(";|&"):
+                break
+            k += 1
+        if count == 0:
+            return ("args", None)
+        if count >= 2:
+            j += 1
+    elif wrapper == "busybox":
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("-") and tok != "-":
+                j += 1
+                continue
+            break
+    if j >= len(words):
+        return ("args", None)
+    return ("cmd", j)
+
+
+def _split_string_runs_power(value: str, depth: int = 0) -> bool:
+    """True if an env -S split-string runs a power command.
+
+    The string is split the way env splits it; leading assignments
+    are skipped, and a wrapper first word resolves through the same
+    wrapper logic (so `sudo reboot` and chained wrappers count).
+    Depth-capped: each nesting level strips at least one word.
+    """
+    if depth >= _NESTED_MAX_DEPTH:
+        return False
+    words = value.split()
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if _ASSIGN_RE.match(w):
+            i += 1
+            continue
+        if w.lower() in _POWER_WORDS:
+            return True
+        if w in _POWER_WRAPPERS:
+            kind, idx = _power_wrapper_command(words, i, depth + 1)
+            if kind == "block":
+                return True
+            if kind == "args":
+                return False
+            i = idx
+            continue
+        return False
+    return False
+
+
+def _segment_command_power(segment: str) -> bool:
+    """True if `segment` runs a power command in command position.
+
+    Walks the segment's decoded words: command position holds at
+    the start, after a separator, after a control keyword or group
+    opener, after a case pattern, after a function definition's
+    head, and through wrappers to their command word. An ordinary command word ends command position
+    until the next separator, except that a find -exec / -execdir /
+    -ok / -okdir primary opens a new command position for its own
+    command. A power word glued to a following operator
+    (`reboot&&echo`) counts; a power word glued to a following
+    word (`rebootfoo`) does not.
+    """
+    words = _tokens(segment)
+    current_command: Optional[str] = None
+    cmd_pos = True
+    i = 0
+    while i < len(words):
+        raw = words[i]
+        core = raw.rstrip(";|&")
+        had_sep = core != raw
+        if not core:
+            cmd_pos = True
+            current_command = None
+            i += 1
+            continue
+        if not cmd_pos:
+            if current_command == "find" and core in (
+                "-exec", "-execdir", "-ok", "-okdir",
+            ):
+                cmd_pos = True
+            elif current_command == "case" and ")" in core:
+                # The pattern ends at the LAST `)`: `foo)` ends it
+                # (next word is the arm body), `foo)echo` runs echo
+                # (its arguments stay arguments), `()foo)` is an
+                # empty pattern glued to the next one.
+                tail = core.rsplit(")", 1)[1].rstrip(";|&")
+                if tail.lower() in _POWER_WORDS:
+                    return True
+                if not tail or had_sep:
+                    cmd_pos = True
+                    current_command = None
+            elif core == "()":
+                # Spaced function-definition parens (`f () { ... }`):
+                # the word after them is the body. A bare `)` alone
+                # is not reset: `$(echo hi) reboot` runs echo's
+                # output with reboot as its argument.
+                cmd_pos = True
+                current_command = None
+            elif had_sep:
+                cmd_pos = True
+                current_command = None
+            i += 1
+            continue
+        if _ASSIGN_RE.match(core):
+            pass
+        elif core in _POWER_POSITION_KEYWORDS:
+            pass
+        elif core.lower() in _POWER_WORDS:
+            return True
+        elif core in _POWER_WRAPPERS:
+            kind, idx = _power_wrapper_command(words, i)
+            if kind == "block":
+                return True
+            if kind == "cmd":
+                i = idx
+                continue
+            cmd_pos = False
+            current_command = None
+        else:
+            lowered = core.lower()
+            for pw in _POWER_WORDS:
+                if lowered.startswith(pw) and len(lowered) > len(pw) \
+                        and lowered[len(pw)] in ";|&":
+                    return True
+            current_command = core
+            cmd_pos = False
+        if had_sep or _FUNC_DEF_RE.fullmatch(core):
+            cmd_pos = True
+            current_command = None
+        i += 1
+    return False
+
+
+def _check_command_position_power(command: str) -> Optional[str]:
+    """Block a power command in any command position of `command`.
+
+    Each logical line from _logical_command_lines is walked with
+    _segment_command_power, so heredoc bodies (data, not commands)
+    are never scanned as commands here, exactly as the v1.12.0 line
+    scan treats them. Subshells, substitutions, -c strings, and
+    interpreter strings already recurse through _check_all, so
+    nested positions are covered by the recursion, not by this pass.
+    """
+    for line in _logical_command_lines(command):
+        if _segment_command_power(line):
+            return "system power control"
+    return None
+
+
 def _check_all(command: str, cwd: Optional[Path] = None, depth: int = 0) -> Optional[str]:
     """Every denylist pass over `command`, recursing into sub-strings.
 
     Raw, then command-word-normalized, then nested groups, -c /
-    eval strings, interpreter code strings, heredoc bodies, and
-    power words on later lines of a multiline command — each pass
-    only adds blocks. Sub-passes are depth-capped and every
+    eval strings, interpreter code strings, heredoc bodies, power
+    words on later lines of a multiline command, and power words in
+    any command position — each pass only adds blocks. Sub-passes are depth-capped and every
     sub-string they recurse into is strictly shorter than its
     parent, so recursion always terminates.
     """
@@ -2446,7 +2840,10 @@ def _check_all(command: str, cwd: Optional[Path] = None, depth: int = 0) -> Opti
     label = _check_heredocs(command, cwd, depth)
     if label:
         return label
-    return _check_multiline_power(command)
+    label = _check_multiline_power(command)
+    if label:
+        return label
+    return _check_command_position_power(command)
 
 
 def _check_dangerous_once(command: str, cwd: Optional[Path] = None) -> Optional[str]:
@@ -2489,7 +2886,10 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     checks over interpreter code strings, variable-resolved command
     strings, and heredoc/herestring bodies fed to interpreters,
     then (v1.12.0) a heredoc-aware line scan for power commands on
-    later lines of a plain multiline command.
+    later lines of a plain multiline command, then (v1.13.0) a
+    command-position scan for power commands behind wrappers,
+    control keywords, brace groups, function bodies, case patterns,
+    and find -exec primaries.
     """
     if ALLOW_DANGEROUS:
         return None
