@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.13.0"
+    assert r.json()["version"] == "1.14.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1375,4 +1375,119 @@ def test_dangerous_blocked_v113(client, command):
     ],
 )
 def test_benign_still_allowed_v113(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# v1.14.0: chroot / nsenter / systemd-run as power-command wrappers
+# ---------------------------------------------------------------------------
+# v1.13.0's wrapper set missed three tools that run a command word
+# of their own: chroot takes NEWROOT then COMMAND, nsenter runs its
+# program in another process's namespaces, and systemd-run runs its
+# command as a transient unit. Flag parsing follows each tool's
+# --help: chroot --userspec / --groups take a required value,
+# nsenter's namespace flags take optional values only (a separate
+# word is the program, never a flag value) while --target / --wdns
+# and short -t / -W take a required value, and systemd-run's value
+# longs and short value letters (-H / -M / -u / -p / -E) take a
+# required value. The same change also lets shell / interpreter
+# -c extraction see past a wrapper, which it previously missed
+# even for timeout / nohup / exec / busybox / coproc. Power words
+# that are only flag values, arguments, or a wrapper's missing
+# command stay allowed.
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # chroot: NEWROOT then COMMAND, flags before the root.
+        "chroot /mnt reboot",
+        "chroot / reboot",
+        "chroot --userspec=0:0 / reboot",
+        "chroot --userspec 0:0 / reboot",
+        "chroot --groups 0,1 /mnt shutdown",
+        "chroot --skip-chdir / halt",
+        "chroot /mnt poweroff",
+        "chroot -- /mnt reboot",
+        # nsenter: namespace flags, then the program.
+        "nsenter -t 1 reboot",
+        "nsenter --target 1 reboot",
+        "nsenter --target=1 reboot",
+        "nsenter -t1 reboot",
+        "nsenter -t 1 -m reboot",
+        "nsenter -m -t 1 shutdown",
+        "nsenter -t 1 -p halt",
+        "nsenter -W /ns reboot",
+        "nsenter --wdns /ns reboot",
+        "nsenter -w/ns reboot",
+        # systemd-run: value flags, then the command.
+        "systemd-run reboot",
+        "systemd-run --scope reboot",
+        "systemd-run --unit=myunit reboot",
+        "systemd-run --unit myunit reboot",
+        "systemd-run -u myunit reboot",
+        "systemd-run -p Foo=bar reboot",
+        "systemd-run --property Foo=bar reboot",
+        "systemd-run --scope --unit=x --description test reboot",
+        "systemd-run --on-calendar daily shutdown",
+        "systemd-run --working-directory /tmp halt",
+        "systemd-run -E FOO=bar poweroff",
+        "systemd-run --slice foo reboot",
+        # Chained wrappers and other positions resolve the same way.
+        "sudo nsenter -t 1 reboot",
+        "nsenter -t 1 sudo reboot",
+        "sudo systemd-run --scope reboot",
+        "systemd-run --scope sudo reboot",
+        "sudo chroot / reboot",
+        "time chroot / reboot",
+        "if true; then chroot / reboot; fi",
+        "env -S 'chroot / reboot'",
+        # Shell / interpreter -c strings behind a wrapper execute.
+        "chroot /mnt sh -c 'reboot'",
+        "nsenter -t 1 sh -c 'reboot'",
+        "systemd-run --scope sh -c 'reboot'",
+        "timeout 5 sh -c 'reboot'",
+        "nohup sh -c 'reboot'",
+        "busybox sh -c 'reboot'",
+        "sudo chroot / sh -c 'reboot'",
+        "chroot / sudo sh -c 'reboot'",
+        "chroot /mnt python3 -c 'import os; os.system(\"reboot\")'",
+        "timeout 5 python3 -c 'import os; os.system(\"reboot\")'",
+    ],
+)
+def test_dangerous_blocked_v114(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Wrappers running harmless commands stay allowed.
+        "chroot /mnt ls",
+        "chroot /mnt echo reboot",
+        "chroot --userspec 0:0 / echo reboot",
+        "chroot /mnt",
+        "chroot --help",
+        "nsenter -t 1 ls",
+        "nsenter -t 1 echo reboot",
+        "nsenter --target 1 echo reboot",
+        "nsenter -t 1",
+        "nsenter -w/ns ls",
+        "systemd-run --scope ls",
+        "systemd-run --unit=myunit echo hi",
+        "systemd-run -p Foo=bar ls",
+        "systemd-run --on-calendar daily echo hi",
+        "systemd-run --scope echo reboot",
+        # A power word consumed as a flag value is not a command.
+        "systemd-run --description reboot echo hi",
+        "systemd-run --unit reboot echo hi",
+        # Harmless -c strings behind a wrapper stay allowed.
+        "chroot /mnt sh -c 'echo hi'",
+        "nsenter -t 1 sh -c 'echo hi'",
+        "chroot /mnt python3 -c 'import os; os.system(\"echo hi\")'",
+        "timeout 5 ls",
+        "timeout 5 sh -c 'echo hi'",
+    ],
+)
+def test_benign_still_allowed_v114(client, command):
     assert server.check_dangerous(command) is None, command

@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.13.0"
+VERSION = "1.14.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1246,6 +1246,18 @@ def _extract_command_strings(command: str) -> list[str]:
             break
         if cmd_idx is None:
             continue
+        # v1.14.0: same resolution as _skip_wrappers: a power
+        # wrapper this loop does not know (timeout / nohup / exec /
+        # coproc / busybox / chroot / nsenter / systemd-run) would
+        # otherwise be taken as the command word and a shell -c
+        # string behind it missed outright.
+        if words[cmd_idx][1] in _POWER_WRAPPERS:
+            resolved = _resolve_power_wrappers(
+                [w[1] for w in words], cmd_idx
+            )
+            if resolved is None:
+                continue
+            cmd_idx = resolved
         _raw, decoded, _s, _end = words[cmd_idx]
         base = decoded.rsplit("/", 1)[-1]
         if base == "eval":
@@ -1398,6 +1410,25 @@ def _variable_only_resolution(
     return ("resolved", " ".join(parts))
 
 
+def _resolve_power_wrappers(decoded: list[str], idx: int) -> Optional[int]:
+    """Follow chained power wrappers to the word they really run.
+
+    `decoded` is a segment's decoded words and `idx` points at a
+    wrapper word from _POWER_WRAPPERS. Every _power_wrapper_command
+    step strictly advances, so the loop terminates. Returns None
+    when the chain runs no command (flags run out, a non-executing
+    mode, or an env -S string that itself runs a power command —
+    that last case is already blocked by the command-position pass,
+    so extraction has nothing to add).
+    """
+    while 0 <= idx < len(decoded) and decoded[idx] in _POWER_WRAPPERS:
+        kind, nxt = _power_wrapper_command(decoded, idx)
+        if kind != "cmd" or nxt is None:
+            return None
+        idx = nxt
+    return idx if 0 <= idx < len(decoded) else None
+
+
 def _skip_wrappers(words: list[tuple[str, str, int, int]]) -> Optional[int]:
     """Index of the command word in `words`, skipping wrappers.
 
@@ -1429,6 +1460,14 @@ def _skip_wrappers(words: list[tuple[str, str, int, int]]) -> Optional[int]:
                     idx += 1
                 continue
             flags_phase = False
+        # v1.14.0: the loop above only knows _WRAPPER_WORDS, so a
+        # power wrapper it does not know (timeout / nohup / exec /
+        # coproc / busybox / chroot / nsenter / systemd-run) would
+        # be returned as the command word and the interpreter /
+        # heredoc passes would miss the real command behind it.
+        # Resolve through _power_wrapper_command instead.
+        if decoded in _POWER_WRAPPERS:
+            return _resolve_power_wrappers([w[1] for w in words], idx)
         return idx
     return None
 
@@ -2462,6 +2501,9 @@ _POWER_POSITION_KEYWORDS = {
 _POWER_WRAPPERS = {
     "time", "command", "env", "nice", "nohup", "timeout", "sudo",
     "exec", "coproc", "busybox",
+    # v1.14.0: chroot / nsenter / systemd-run run their command
+    # word too, behind their own flags (and, for chroot, the root).
+    "chroot", "nsenter", "systemd-run",
 }
 
 # Sudo long flags that take a separate value word.
@@ -2480,6 +2522,56 @@ _SUDO_VALUE_LETTERS = set("ugptC")
 # `)` (a substitution, a subshell word) is not: `$(echo ls)
 # reboot` runs ls with reboot as its argument, not reboot itself.
 _FUNC_DEF_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\(\)[{(]?")
+
+
+# ---------------------------------------------------------------------------
+# v1.14.0: chroot / nsenter / systemd-run as power-command wrappers
+# ---------------------------------------------------------------------------
+# v1.13.0's wrapper set missed three tools that run a command word
+# of their own: `chroot /mnt reboot`, `nsenter -t 1 reboot`, and
+# `systemd-run --scope reboot` all sailed through, because the
+# wrapper word itself is not a power word and the power word sits
+# in argument position. Each joins _POWER_WRAPPERS, so chained
+# wrappers (`sudo chroot / reboot`, `time nsenter -t 1 reboot`),
+# control-keyword positions, and env -S split strings resolve
+# through the same logic as the v1.13.0 wrappers. The same hole
+# also hid interpreter and shell -c strings behind a wrapper:
+# _extract_command_strings and _skip_wrappers only knew
+# _WRAPPER_WORDS, so `chroot /mnt sh -c 'reboot'` (and the same
+# shape behind timeout / nohup / exec / coproc / busybox, missed
+# since before v1.13.0) extracted nothing. Both now resolve a
+# _POWER_WRAPPERS word to the word it runs before looking for a
+# shell or interpreter, so the fix covers the older wrappers'
+# -c form too, with no previously extracted string removed.
+#
+# Flag parsing follows each tool's own --help (verified locally):
+# chroot takes NEWROOT then COMMAND; --userspec / --groups take a
+# required value (= form or separate word), --skip-chdir takes
+# none, and chroot has no short options. nsenter's namespace flags
+# take optional values ([=<file>] in its help), so a separate word
+# is NEVER consumed for them: `nsenter -w /ns reboot` runs /ns
+# with reboot as its argument, not reboot; only --target and
+# --wdns (and short -t / -W) take a required value. systemd-run's
+# value longs and short value letters (-H / -M / -u / -p / -E)
+# take a required value (= form or separate word); every other
+# flag is boolean. An unknown flag is skipped as one token, the
+# same convention as the older wrappers: every flag in the local
+# --help output of all three tools is covered above, so an unknown
+# flag is one the tool itself would reject. The one way this
+# misaligns is a future value-taking long flag added to one of
+# these tools after this version's help output. No non-executing
+# mode is special-cased here: a bare wrapper with no command word
+# still returns ("args", None), exactly like the older wrappers.
+#
+# systemd-run value-taking long flags (all others are boolean).
+_SYSTEMD_RUN_VALUE_LONGS = {
+    "--host", "--machine", "--unit", "--property", "--description",
+    "--slice", "--expand-environment", "--service-type", "--uid",
+    "--gid", "--nice", "--working-directory", "--setenv",
+    "--path-property", "--socket-property", "--on-active", "--on-boot",
+    "--on-startup", "--on-unit-active", "--on-unit-inactive",
+    "--on-calendar", "--timer-property",
+}
 
 
 def _power_wrapper_command(
@@ -2672,6 +2764,99 @@ def _power_wrapper_command(
                 break
             if tok.startswith("-") and tok != "-":
                 j += 1
+                continue
+            break
+    elif wrapper == "chroot":
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("--"):
+                if "=" in tok:
+                    j += 1
+                elif tok in ("--userspec", "--groups"):
+                    j += 2
+                else:
+                    # --skip-chdir / --help / --version take no value.
+                    j += 1
+                continue
+            if tok.startswith("-") and tok != "-":
+                # chroot has no short options: an unknown flag makes
+                # chroot error out, so skipping it can only over-,
+                # never under-, block.
+                j += 1
+                continue
+            break
+        # The first non-flag word is NEWROOT, not the command.
+        if j < len(words):
+            j += 1
+    elif wrapper == "nsenter":
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("--"):
+                if "=" in tok:
+                    j += 1
+                elif tok in ("--target", "--wdns"):
+                    j += 2
+                else:
+                    # Optional-arg longs (--mount[=file],
+                    # --setuid[=uid], --root[=dir], ...) and boolean
+                    # longs never take a separate word: the next
+                    # word is the program.
+                    j += 1
+                continue
+            if tok.startswith("-") and tok != "-":
+                k = 1
+                value_taken = False
+                while k < len(tok):
+                    c = tok[k]
+                    if c in "tW":
+                        # -t / -W take a required value: the rest
+                        # of the cluster, or the next word.
+                        j += 1 if k + 1 < len(tok) else 2
+                        value_taken = True
+                        break
+                    # Every other short flag is boolean or takes an
+                    # optional attached value only (-m / -S / -w /
+                    # ...): a separate word is the program.
+                    k += 1
+                if not value_taken:
+                    j += 1
+                continue
+            break
+    elif wrapper == "systemd-run":
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("--"):
+                if "=" in tok:
+                    j += 1
+                elif tok in _SYSTEMD_RUN_VALUE_LONGS:
+                    j += 2
+                else:
+                    j += 1
+                continue
+            if tok.startswith("-") and tok != "-":
+                k = 1
+                value_taken = False
+                while k < len(tok):
+                    c = tok[k]
+                    if c in "HMupE":
+                        # -H / -M / -u / -p / -E take a required
+                        # value: the rest of the cluster, or the
+                        # next word. All other shorts are boolean.
+                        j += 1 if k + 1 < len(tok) else 2
+                        value_taken = True
+                        break
+                    k += 1
+                if not value_taken:
+                    j += 1
                 continue
             break
     if j >= len(words):
@@ -2889,7 +3074,13 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     later lines of a plain multiline command, then (v1.13.0) a
     command-position scan for power commands behind wrappers,
     control keywords, brace groups, function bodies, case patterns,
-    and find -exec primaries.
+    and find -exec primaries, then (v1.14.0) the same
+    command-position scan extended to chroot / nsenter /
+    systemd-run wrappers, whose command word follows their flags
+    and (for chroot) the new root, and the shell / interpreter
+    -c extraction extended past those wrappers (and past
+    timeout / nohup / exec / coproc / busybox) to the command
+    they run.
     """
     if ALLOW_DANGEROUS:
         return None
