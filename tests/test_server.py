@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.14.0"
+    assert r.json()["version"] == "1.15.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1490,4 +1490,80 @@ def test_dangerous_blocked_v114(client, command):
     ],
 )
 def test_benign_still_allowed_v114(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# v1.15.0: fragmented destructive names behind a power wrapper
+# ---------------------------------------------------------------------------
+# v1.8.0 decoded a fragmented command word only when it was the
+# segment's first word, so `r\m -rf /` was blocked but the same
+# name behind a wrapper sailed through: _normalize_segment took
+# the wrapper itself as the command word and spliced nothing, and
+# the raw rm regex never saw `rm`. _normalize_segment now resolves
+# the wrapper to the program word it runs and splices THAT word
+# decoded in, for every _POWER_WRAPPERS word outside _WRAPPER_WORDS
+# (chroot / nsenter / systemd-run / timeout / nohup / exec /
+# coproc / busybox), chained and after a separator alike. Coproc
+# gets both candidates: _power_wrapper_command treats the first
+# word after coproc as its NAME when more words follow, but a
+# nameless coproc runs that word as its command, so the generic
+# resolution alone points at `-rf` for `coproc r\m -rf /` and
+# misses it. A fragmented word that is only an argument (echo's)
+# or a harmless command stays allowed, as does a fragmented name
+# with no destructive flags.
+#
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Fragmented rm behind each wrapper class.
+        r"nsenter -t 1 r\m -rf /",
+        r"chroot /mnt r\m -rf /",
+        r"systemd-run --scope r\m -rf /",
+        r"timeout 5 r\m -rf /",
+        r"nohup r\m -rf /",
+        r"exec r\m -rf /",
+        r"busybox r\m -rf /",
+        # Quoted / double-quoted spellings, not just backslash.
+        r"nsenter -t 1 'rm' -rf /",
+        r'nsenter -t 1 r"m" -rf /',
+        r"chroot /mnt 'rm' -rf /",
+        # Chained wrappers and later segments resolve the same way.
+        r"sudo nsenter -t 1 r\m -rf /",
+        r"nsenter -t 1 sudo r\m -rf /",
+        r"echo hi; nsenter -t 1 r\m -rf /",
+        # Coproc: nameless, named, chained, and nested forms.
+        r"coproc r\m -rf /",
+        r"coproc foo r\m -rf /",
+        r"coproc sudo r\m -rf /",
+        r"sudo coproc r\m -rf /",
+        r"nsenter -t 1 coproc r\m -rf /",
+        # Pre-existing coproc power blocks stay blocked.
+        r"coproc reboot",
+        r"coproc foo reboot",
+    ],
+)
+def test_dangerous_blocked_v115(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Harmless commands behind a wrapper stay allowed, fragmented
+        # or not; a fragmented name with no destructive flags does too.
+        "nsenter -t 1 ls",
+        "nsenter -t 1 echo reboot",
+        r"nsenter -t 1 r\m --help",
+        r"nsenter -t 1 l\s -l",
+        r"coproc l\s -l",
+        r"chroot /mnt l\s",
+        "nsenter -t 1 echo hi",
+        # A fragmented word that is only an argument is not a command
+        # word: normalization touches the program word, never its args.
+        r"nsenter -t 1 echo r\m -rf /",
+    ],
+)
+def test_benign_still_allowed_v115(client, command):
     assert server.check_dangerous(command) is None, command

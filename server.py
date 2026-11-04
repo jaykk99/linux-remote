@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.14.0"
+VERSION = "1.15.0"
 
 
 # ---------------------------------------------------------------------------
@@ -739,6 +739,17 @@ def _normalize_segment(segment: str) -> str:
     it (`r\\m` -> `rm`, `r"m"` -> `rm`, `''rm` -> `rm`), splice the
     decoded form in. A plain command word returns the segment
     unchanged. Only the first word is ever touched.
+    v1.15.0: when that first word is itself a wrapper the loop
+    above does not know (a _POWER_WRAPPERS word outside
+    _WRAPPER_WORDS: chroot, nsenter, systemd-run, timeout, nohup,
+    exec, coproc, busybox), it is resolved through
+    `_resolve_power_wrappers` to the program word it really runs,
+    and THAT word is the one decoded and spliced
+    (`nsenter -t 1 r\\m -rf /` -> `rm`). Coproc is ambiguous (its
+    first word may be a coproc name, with the command second, or
+    the command itself), so both coproc candidates are spliced;
+    unshare / setpriv / runuser are NOT in _POWER_WRAPPERS yet and
+    are deliberately not claimed here.
     """
     i = 0
     n = len(segment)
@@ -779,6 +790,47 @@ def _normalize_segment(segment: str) -> str:
                 continue
             flags_phase = False
             # Fall through: this word is the command word.
+        if decoded in _POWER_WRAPPERS:
+            # v1.15.0: this word runs a program word of its own
+            # (see the docstring). Resolve to it and decode that
+            # word instead; None means the wrapper runs no program
+            # word here (flags run out, a non-executing mode, or a
+            # -c string, which the command-string pass scans).
+            # Coproc is ambiguous: _power_wrapper_command treats
+            # the first word after coproc as its NAME whenever
+            # more words follow, but a nameless coproc runs that
+            # first word as its command, so `coproc r\m -rf /`
+            # resolves through _resolve_power_wrappers to `-rf`,
+            # not `rm`, and the fragmented name survives. Walk
+            # the wrapper chain and also collect the word directly
+            # after any coproc in it, then splice every candidate
+            # (right to left, so earlier spans stay valid). The
+            # named form still resolves as before, so this only
+            # adds the nameless interpretation; it never removes
+            # a block.
+            words = _segment_words(segment)
+            idx = next((k for k, w in enumerate(words) if w[2] == i), None)
+            if idx is not None:
+                decoded_words = [w[1] for w in words]
+                candidates: list[int] = []
+                resolved = _resolve_power_wrappers(decoded_words, idx)
+                if resolved is not None:
+                    candidates.append(resolved)
+                cur = idx
+                while 0 <= cur < len(decoded_words) and decoded_words[cur] in _POWER_WRAPPERS:
+                    if decoded_words[cur] == "coproc" and cur + 1 < len(words):
+                        candidates.append(cur + 1)
+                    kind, nxt = _power_wrapper_command(decoded_words, cur)
+                    if kind != "cmd" or nxt is None or nxt <= cur:
+                        break
+                    cur = nxt
+                out = segment
+                for cand in sorted(set(candidates), key=lambda k: words[k][2], reverse=True):
+                    _raw, dec, s, e = words[cand]
+                    if dec and dec != _raw:
+                        out = out[:s] + dec + out[e:]
+                return out
+            return segment
         if decoded and decoded != raw:
             return segment[:i] + decoded + segment[end:]
         return segment
