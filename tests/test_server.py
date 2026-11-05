@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.15.0"
+    assert r.json()["version"] == "1.16.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1566,4 +1566,184 @@ def test_dangerous_blocked_v115(client, command):
     ],
 )
 def test_benign_still_allowed_v115(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# v1.16.0: unshare / setpriv / runuser as power-command wrappers
+# ---------------------------------------------------------------------------
+# v1.14.0's wrapper set missed three more tools that run a command
+# word of their own: `unshare -f reboot` (namespace flags, then the
+# program), `setpriv --reuid 0 reboot` (privilege flags, then the
+# program), and `runuser -u root reboot` (user flag, then the
+# command). Flag parsing follows each tool's local --help: unshare's
+# namespace flags take an optional value only (a separate word is
+# the program, never a flag value) while --root / --wd / --setuid /
+# --setgid and short -R / -w / -S / -G take a required value and
+# --propagation / --setgroups / --monotonic / --boottime / --map-user
+# / --map-group / --map-users / --map-groups take one too;
+# setpriv's value longs take a required value and --dump / -d only
+# describe state and never exec, so they return no command word;
+# runuser has two forms — with -u the words after the user are the
+# command, without -u the first word is the user and the rest are
+# shell arguments, never a command — and its -c / --command /
+# --session-command value is itself a shell command string, scanned
+# as one (so `runuser -c 'reboot'` blocks while `runuser -c 'echo
+# hi'` stays allowed). The same change lets shell / interpreter
+# -c extraction and the v1.15.0 fragmented-name splice see past
+# these three wrappers, since both resolve through
+# _POWER_WRAPPERS generically. A power word that is only a flag
+# value, an argument, or a wrapper's missing command stays allowed.
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # unshare: namespace flags, then the program.
+        "unshare -f reboot",
+        "unshare --fork reboot",
+        "unshare --mount reboot",
+        "unshare -m reboot",
+        "unshare -r reboot",
+        "unshare --map-root-user reboot",
+        "unshare -U -r shutdown",
+        "unshare --fork --mount-proc halt",
+        "unshare --kill-child reboot",
+        "unshare --kill-child=SIGTERM reboot",
+        "unshare -R /mnt reboot",
+        "unshare --root /mnt reboot",
+        "unshare --root=/mnt reboot",
+        "unshare -w /tmp reboot",
+        "unshare --wd /tmp reboot",
+        "unshare -S 0 reboot",
+        "unshare --setuid 0 reboot",
+        "unshare -G 0 reboot",
+        "unshare --setgid 0 reboot",
+        "unshare --propagation slave reboot",
+        "unshare --propagation=slave reboot",
+        "unshare --setgroups deny reboot",
+        "unshare --monotonic 1 reboot",
+        "unshare --boottime 1 reboot",
+        "unshare --map-user 0 reboot",
+        "unshare --map-user=0 reboot",
+        "unshare --map-group 0 reboot",
+        "unshare --map-users 0:0:1 reboot",
+        "unshare --map-groups 0:0:1 reboot",
+        "unshare --mount=/ns reboot",
+        "unshare -m/ns reboot",
+        "unshare -f -m shutdown",
+        "unshare -- reboot",
+        "unshare -fR /mnt reboot",
+        # setpriv: privilege flags, then the program.
+        "setpriv reboot",
+        "setpriv --reuid 0 reboot",
+        "setpriv --reuid=0 reboot",
+        "setpriv --ruid 0 --euid 0 --rgid 0 --egid 0 shutdown",
+        "setpriv --nnp reboot",
+        "setpriv --no-new-privs reboot",
+        "setpriv --reset-env reboot",
+        "setpriv --ambient-caps cap_net_admin reboot",
+        "setpriv --inh-caps cap_net_admin reboot",
+        "setpriv --bounding-set cap_net_admin reboot",
+        "setpriv --clear-groups reboot",
+        "setpriv --keep-groups reboot",
+        "setpriv --init-groups reboot",
+        "setpriv --groups 0 reboot",
+        "setpriv --securebits keep_locked reboot",
+        "setpriv --pdeathsig keep reboot",
+        "setpriv --selinux-label foo reboot",
+        "setpriv --apparmor-profile foo reboot",
+        # runuser: -u USER then the command; -c runs a command string.
+        "runuser -u root reboot",
+        "runuser --user root reboot",
+        "runuser --user=root reboot",
+        "runuser -u root -- reboot",
+        "runuser -u root -g wheel reboot",
+        "runuser -u root -m reboot",
+        "runuser -c reboot",
+        "runuser --command reboot",
+        "runuser --command=reboot",
+        "runuser --session-command reboot",
+        "runuser -c 'reboot'",
+        "runuser -c 'echo hi; reboot'",
+        "runuser --command 'shutdown -h now'",
+        # Chained wrappers and other positions resolve the same way.
+        "sudo unshare -f reboot",
+        "unshare -f sudo reboot",
+        "sudo setpriv reboot",
+        "setpriv --reuid 0 sudo reboot",
+        "sudo runuser -u root reboot",
+        "runuser -u root sudo reboot",
+        "time unshare -f reboot",
+        "if true; then setpriv reboot; fi",
+        "env -S 'unshare -f reboot'",
+        "env -S 'runuser -u root reboot'",
+        # Shell / interpreter -c strings behind a wrapper execute.
+        "unshare -f sh -c 'reboot'",
+        "setpriv --reuid 0 sh -c 'reboot'",
+        "runuser -u root sh -c 'reboot'",
+        "unshare -f python3 -c 'import os; os.system(\"reboot\")'",
+        "setpriv --reuid 0 python3 -c 'import os; os.system(\"reboot\")'",
+        # Fragmented names behind the new wrappers (v1.15.0 splice).
+        r"unshare -f r\m -rf /",
+        r"setpriv r\m -rf /",
+        r"runuser -u root r\m -rf /",
+        r"unshare -f 'rm' -rf /",
+        r'setpriv r"m" -rf /',
+    ],
+)
+def test_dangerous_blocked_v116(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Wrappers running harmless commands stay allowed.
+        "unshare -f ls",
+        "unshare --mount echo reboot",
+        "unshare -r echo hi",
+        "unshare -R /mnt ls",
+        "unshare --propagation slave ls",
+        "unshare --map-user 0 ls",
+        "unshare --setuid 0 echo reboot",
+        "unshare --kill-child ls",
+        "unshare -f",
+        "unshare --help",
+        "unshare --mount=/ns ls",
+        "setpriv --reuid 0 ls",
+        "setpriv --reuid 0 echo reboot",
+        "setpriv --nnp ls",
+        "setpriv --groups 0 ls",
+        # --dump / -d only describe state and never exec a program.
+        "setpriv --dump",
+        "setpriv -d",
+        "setpriv --dump reboot",
+        "setpriv -d reboot",
+        "runuser -u root ls",
+        "runuser -u root echo reboot",
+        "runuser -u root",
+        "runuser --user root echo hi",
+        "runuser -c 'echo hi'",
+        "runuser --command 'echo hi'",
+        "runuser --session-command 'echo hi'",
+        # No -u: su-compatible form runs the user's shell; the first
+        # word is the user and the rest are shell arguments, never a
+        # command word — even when that argument is a power word.
+        "runuser root ls",
+        "runuser root reboot",
+        "runuser - root",
+        "runuser -l root",
+        "runuser --login root",
+        # A power word consumed as a flag value is not a command.
+        "unshare --map-user reboot ls",
+        "setpriv --reuid reboot ls",
+        "runuser -u reboot ls",
+        # Harmless -c strings behind a wrapper stay allowed.
+        "unshare -f sh -c 'echo hi'",
+        "setpriv --reuid 0 sh -c 'echo hi'",
+        "runuser -u root sh -c 'echo hi'",
+    ],
+)
+def test_benign_still_allowed_v116(client, command):
     assert server.check_dangerous(command) is None, command

@@ -47,7 +47,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.15.0"
+VERSION = "1.16.0"
 
 
 # ---------------------------------------------------------------------------
@@ -742,14 +742,15 @@ def _normalize_segment(segment: str) -> str:
     v1.15.0: when that first word is itself a wrapper the loop
     above does not know (a _POWER_WRAPPERS word outside
     _WRAPPER_WORDS: chroot, nsenter, systemd-run, timeout, nohup,
-    exec, coproc, busybox), it is resolved through
-    `_resolve_power_wrappers` to the program word it really runs,
-    and THAT word is the one decoded and spliced
-    (`nsenter -t 1 r\\m -rf /` -> `rm`). Coproc is ambiguous (its
-    first word may be a coproc name, with the command second, or
-    the command itself), so both coproc candidates are spliced;
-    unshare / setpriv / runuser are NOT in _POWER_WRAPPERS yet and
-    are deliberately not claimed here.
+    exec, coproc, busybox — and, since v1.16.0, unshare, setpriv,
+    runuser), it is resolved through `_resolve_power_wrappers` to
+    the program word it really runs, and THAT word is the one
+    decoded and spliced (`nsenter -t 1 r\\m -rf /` -> `rm`). Coproc
+    is ambiguous (its first word may be a coproc name, with the
+    command second, or the command itself), so both coproc
+    candidates are spliced; runuser's -c value is a command string,
+    not a program word, so it is scanned by _power_wrapper_command
+    instead and is not claimed here.
     """
     i = 0
     n = len(segment)
@@ -1300,9 +1301,10 @@ def _extract_command_strings(command: str) -> list[str]:
             continue
         # v1.14.0: same resolution as _skip_wrappers: a power
         # wrapper this loop does not know (timeout / nohup / exec /
-        # coproc / busybox / chroot / nsenter / systemd-run) would
-        # otherwise be taken as the command word and a shell -c
-        # string behind it missed outright.
+        # coproc / busybox / chroot / nsenter / systemd-run /
+        # unshare / setpriv / runuser) would otherwise be taken as
+        # the command word and a shell -c string behind it missed
+        # outright.
         if words[cmd_idx][1] in _POWER_WRAPPERS:
             resolved = _resolve_power_wrappers(
                 [w[1] for w in words], cmd_idx
@@ -1514,10 +1516,11 @@ def _skip_wrappers(words: list[tuple[str, str, int, int]]) -> Optional[int]:
             flags_phase = False
         # v1.14.0: the loop above only knows _WRAPPER_WORDS, so a
         # power wrapper it does not know (timeout / nohup / exec /
-        # coproc / busybox / chroot / nsenter / systemd-run) would
-        # be returned as the command word and the interpreter /
-        # heredoc passes would miss the real command behind it.
-        # Resolve through _power_wrapper_command instead.
+        # coproc / busybox / chroot / nsenter / systemd-run /
+        # unshare / setpriv / runuser) would be returned as the
+        # command word and the interpreter / heredoc passes would
+        # miss the real command behind it. Resolve through
+        # _power_wrapper_command instead.
         if decoded in _POWER_WRAPPERS:
             return _resolve_power_wrappers([w[1] for w in words], idx)
         return idx
@@ -2556,6 +2559,9 @@ _POWER_WRAPPERS = {
     # v1.14.0: chroot / nsenter / systemd-run run their command
     # word too, behind their own flags (and, for chroot, the root).
     "chroot", "nsenter", "systemd-run",
+    # v1.16.0: unshare / setpriv / runuser run their command word
+    # too, behind their own flags (and, for runuser, the user).
+    "unshare", "setpriv", "runuser",
 }
 
 # Sudo long flags that take a separate value word.
@@ -2625,7 +2631,74 @@ _SYSTEMD_RUN_VALUE_LONGS = {
     "--on-calendar", "--timer-property",
 }
 
+# setpriv value-taking long flags (all others are boolean, and
+# --dump is a non-executing mode handled in _power_wrapper_command).
+_SETPRIV_VALUE_LONGS = {
+    "--ambient-caps", "--inh-caps", "--bounding-set", "--ruid",
+    "--euid", "--rgid", "--egid", "--reuid", "--regid", "--groups",
+    "--securebits", "--pdeathsig", "--selinux-label",
+    "--apparmor-profile",
+}
 
+# unshare long flags that take a required value (a separate word or
+# an = form). The namespace flags (--mount[=<file>], --uts, --ipc,
+# --net, --pid, --user, --cgroup, --time) and --kill-child /
+# --mount-proc take an OPTIONAL value, so only the = form counts
+# and a separate word is the program; every other long is boolean.
+_UNSHARE_VALUE_LONGS = {
+    "--root", "--wd", "--setuid", "--setgid", "--propagation",
+    "--setgroups", "--monotonic", "--boottime", "--map-user",
+    "--map-group", "--map-users", "--map-groups",
+}
+
+# runuser long flags that take a required value (a separate word or
+# an = form). --command / --session-command are handled separately:
+# their value is a shell command string, not a plain value.
+_RUNUSER_VALUE_LONGS = {
+    "--user", "--group", "--supp-group", "--whitelist-environment",
+    "--shell",
+}
+
+
+# ---------------------------------------------------------------------------
+# v1.16.0: unshare / setpriv / runuser as power-command wrappers
+# ---------------------------------------------------------------------------
+# v1.14.0's wrapper set missed three more tools that run a command
+# word of their own: `unshare -f reboot`, `setpriv --reuid 0 reboot`,
+# and `runuser -u root reboot` all sailed through, because the
+# wrapper word itself is not a power word and the power word sits in
+# argument position. Each joins _POWER_WRAPPERS, so chained
+# wrappers, control-keyword positions, env -S split strings, shell /
+# interpreter -c extraction, and the v1.15.0 fragmented-name splice
+# all resolve through the same logic as the older wrappers, with no
+# previously extracted string or block removed.
+#
+# Flag parsing follows each tool's own --help (verified locally):
+# unshare's namespace flags take an optional value ([=<file>] in its
+# help), so a separate word is NEVER consumed for them: `unshare -m
+# reboot` runs reboot, while `unshare -m/ns reboot` runs reboot in
+# that namespace; --kill-child / --mount-proc are optional-value
+# too. --root / --wd / --setuid / --setgid and short -R / -w / -S /
+# -G take a required value (= form or separate word), as do
+# --propagation / --setgroups / --monotonic / --boottime /
+# --map-user / --map-group / --map-users / --map-groups; every
+# other flag is boolean. setpriv's value longs take a required
+# value (= form or separate word); --dump / -d only show state and
+# never exec, so they return ("args", None) like `command -v`.
+# runuser has two forms: with -u the words after the user are the
+# command (after an optional --), without -u the first word is the
+# user and the rest are shell arguments, never a command word, so
+# that form returns ("args", None). Its -c / --command /
+# --session-command value is itself a shell command string, so it
+# is scanned with the full checks (the way env -S is): a power
+# command inside it blocks, a harmless string does not. An unknown
+# flag is skipped as one token, the same convention as the older
+# wrappers: every flag in the local --help output of all three
+# tools is covered above, so an unknown flag is one the tool
+# itself would reject. No non-executing mode is special-cased
+# beyond setpriv --dump: a bare wrapper with no command word still
+# returns ("args", None), exactly like the older wrappers.
+#
 def _power_wrapper_command(
     words: list[str], i: int, depth: int = 0
 ) -> tuple[str, Optional[int]]:
@@ -2911,6 +2984,148 @@ def _power_wrapper_command(
                     j += 1
                 continue
             break
+    elif wrapper == "unshare":
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("--"):
+                if "=" in tok:
+                    j += 1
+                elif tok in _UNSHARE_VALUE_LONGS:
+                    j += 2
+                else:
+                    # Optional-value longs (--mount[=<file>],
+                    # --kill-child[=<signame>], --mount-proc[=<dir>])
+                    # and boolean longs never take a separate word.
+                    j += 1
+                continue
+            if tok.startswith("-") and tok != "-":
+                k = 1
+                value_taken = False
+                while k < len(tok):
+                    c = tok[k]
+                    if c in "RwSG":
+                        # -R / -w / -S / -G take a required value:
+                        # the rest of the cluster, or the next word.
+                        j += 1 if k + 1 < len(tok) else 2
+                        value_taken = True
+                        break
+                    # Every other short is boolean or takes an
+                    # optional attached value only (-m / -u / -i /
+                    # -n / -p / -U / -C / -T): a separate word is
+                    # the program.
+                    k += 1
+                if not value_taken:
+                    j += 1
+                continue
+            break
+    elif wrapper == "setpriv":
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("--"):
+                if tok == "--dump":
+                    # --dump shows state and does not exec.
+                    return ("args", None)
+                if "=" in tok:
+                    j += 1
+                elif tok in _SETPRIV_VALUE_LONGS:
+                    j += 2
+                else:
+                    # Boolean longs (--nnp, --clear-groups,
+                    # --keep-groups, --init-groups, --reset-env,
+                    # --help, --version) take no value.
+                    j += 1
+                continue
+            if tok.startswith("-") and tok != "-":
+                if "d" in tok[1:]:
+                    # -d shows state and does not exec. setpriv
+                    # has no other short options, so any other
+                    # short token is skipped as one token.
+                    return ("args", None)
+                j += 1
+                continue
+            break
+    elif wrapper == "runuser":
+        # Two forms: `runuser -u USER [--] COMMAND` runs COMMAND,
+        # while `runuser [-] [USER [ARGS...]]` (su-compatible, no
+        # -u) runs the user's shell with the rest as shell
+        # arguments, never a command word. -c / --command /
+        # --session-command run a shell command string instead, so
+        # that value is scanned with the full checks.
+        seen_u = False
+        while j < len(words):
+            tok = words[j]
+            if tok == "--":
+                j += 1
+                break
+            if tok.startswith("--"):
+                if "=" in tok:
+                    name, val = tok.split("=", 1)
+                    if name in ("--command", "--session-command"):
+                        if _check_all(val, None, depth + 1) is not None:
+                            return ("block", None)
+                    if name == "--user":
+                        seen_u = True
+                    j += 1
+                    continue
+                if tok in ("--command", "--session-command"):
+                    if j + 1 >= len(words):
+                        return ("args", None)
+                    if _check_all(words[j + 1], None, depth + 1) is not None:
+                        return ("block", None)
+                    j += 2
+                    continue
+                if tok == "--user":
+                    seen_u = True
+                if tok in _RUNUSER_VALUE_LONGS:
+                    j += 2
+                    continue
+                # Boolean longs (--login, --preserve-environment,
+                # --fast, --pty, --help, --version) take no value.
+                j += 1
+                continue
+            if tok.startswith("-") and tok != "-":
+                k = 1
+                value_taken = False
+                while k < len(tok):
+                    c = tok[k]
+                    if c == "c":
+                        # -c takes a command string: attached, or
+                        # the next word.
+                        if k + 1 < len(tok):
+                            val = tok[k + 1:]
+                            j += 1
+                        elif j + 1 < len(words):
+                            val = words[j + 1]
+                            j += 2
+                        else:
+                            return ("args", None)
+                        if _check_all(val, None, depth + 1) is not None:
+                            return ("block", None)
+                        value_taken = True
+                        break
+                    if c in "ugGws":
+                        if c == "u":
+                            seen_u = True
+                        j += 1 if k + 1 < len(tok) else 2
+                        value_taken = True
+                        break
+                    # Boolean shorts (-m, -p, -l, -f, -P, -h, -V)
+                    # and a bare "-" (login) take no value.
+                    k += 1
+                if not value_taken:
+                    j += 1
+                continue
+            break
+        if not seen_u:
+            # No -u: the first word is the user, the rest are
+            # shell arguments, never a command word.
+            return ("args", None)
     if j >= len(words):
         return ("args", None)
     return ("cmd", j)
@@ -3132,7 +3347,13 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     and (for chroot) the new root, and the shell / interpreter
     -c extraction extended past those wrappers (and past
     timeout / nohup / exec / coproc / busybox) to the command
-    they run.
+    they run, then (v1.16.0) the same command-position scan
+    extended to unshare / setpriv / runuser wrappers, whose
+    command word follows their flags (and, for runuser, the user),
+    with runuser's -c / --command / --session-command value
+    scanned as a shell command string of its own, and the shell /
+    interpreter -c extraction and the fragmented-name splice
+    extended past them the same way.
     """
     if ALLOW_DANGEROUS:
         return None
