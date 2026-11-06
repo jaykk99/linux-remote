@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.16.0"
+    assert r.json()["version"] == "1.17.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1746,4 +1746,94 @@ def test_dangerous_blocked_v116(client, command):
     ],
 )
 def test_benign_still_allowed_v116(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# v1.17.0: env -S / --split-string split strings scanned with the
+# full checks (interpreter code behind the split string)
+# ---------------------------------------------------------------------------
+# v1.13.0 only looked at the split string's first word, so an
+# interpreter behind it sailed through: `env -S 'bash -c reboot'`
+# and `env -S 'python3 -c "import os; os.system(\"reboot\")"'`
+# both executed their payload. The split string is argv, not a
+# shell line, so it is split the way env splits it (shlex) and the
+# resulting command gets the full checks — shell / interpreter -c
+# / -e code, wrappers, chained wrappers, and nested env -S strings
+# are all caught. Two spellings were entirely unchecked: the long
+# form --split-string (separate word or = form), whose value was
+# consumed without being scanned, and -S inside a short-option
+# cluster (`-iS '...'` / `-iS'...'`), which the leading-flag checks
+# never saw. A power word that is only an argument of the split
+# command stays allowed. `env -S 'echo hi; reboot'` blocks: the
+# command-position scan treats the quoted `;` as a separator,
+# exactly as the same text does at top level (`echo 'hi;' reboot`
+# blocks there too), and it already blocked pre-fix via the
+# multiline scan.
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Shell -c strings behind -S execute.
+        "env -S 'bash -c reboot'",
+        "env -S 'sh -c \"rm -rf /\"'",
+        "env -S 'bash -c \"rm -rf /\"'",
+        "env -S 'sh -c \"shutdown -h now\"'",
+        # Interpreter -c / -e code behind -S executes.
+        "env -S 'python3 -c \"import os; os.system(\\\"reboot\\\")\"'",
+        "env -S 'python3 -c \"import subprocess; subprocess.run([\\\"reboot\\\"])\"'",
+        "env -S 'perl -e \"system(\\\"reboot\\\")\"'",
+        "env -S 'node -e \"require(\\\"child_process\\\").execSync(\\\"reboot\\\")\"'",
+        "env -S 'ruby -e \"system(\\\"reboot\\\")\"'",
+        # Wrappers and assignments inside the split string resolve.
+        "env -S 'sudo bash -c reboot'",
+        "env -S 'timeout 5 bash -c reboot'",
+        "env -S 'FOO=bar bash -c reboot'",
+        "env -S 'unshare -f bash -c reboot'",
+        # Nested env -S strings recurse.
+        "env -S 'env -S \"bash -c reboot\"'",
+        # The long form --split-string, separate word or = form.
+        "env --split-string 'bash -c reboot'",
+        "env --split-string='bash -c reboot'",
+        "env --split-string 'python3 -c \"import os; os.system(\\\"reboot\\\")\"'",
+        # Attached -S and -S inside a short-option cluster.
+        "env -S'bash -c reboot'",
+        "env -iS 'bash -c reboot'",
+        "env -iS'bash -c reboot'",
+        # Trailing words after the split string do not save it.
+        "env -S 'bash -c reboot' extra",
+        # Quoted separator inside the split string: same treatment
+        # as the same text at top level (already blocked pre-fix).
+        "env -S 'echo hi; reboot'",
+    ],
+)
+def test_dangerous_blocked_v117(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Harmless split strings stay allowed.
+        "env -S 'ls -la'",
+        "env -S 'echo reboot'",
+        "env -S 'grep -r reboot /etc'",
+        "env -S 'bash -c \"echo hi\"'",
+        "env -S 'python3 -c \"print(1)\"'",
+        "env -S 'bash -c \"echo a; echo b\"'",
+        "env --split-string 'ls -la'",
+        "env --split-string 'echo hi'",
+        # Non-executing modes inside the split string stay allowed.
+        "env -S 'setpriv --dump'",
+        "env -S 'command -v reboot'",
+        "env -S 'sudo -l'",
+        # Empty / missing split string runs nothing.
+        "env -S ''",
+        "env -S",
+        # Clustered -S running a harmless command stays allowed.
+        "env -iS 'ls -la'",
+    ],
+)
+def test_benign_still_allowed_v117(client, command):
     assert server.check_dangerous(command) is None, command

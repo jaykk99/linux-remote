@@ -33,6 +33,7 @@ import os
 import re
 import secrets
 import select
+import shlex
 import shutil
 import socket
 import subprocess
@@ -47,7 +48,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.16.0"
+VERSION = "1.17.0"
 
 
 # ---------------------------------------------------------------------------
@@ -2756,12 +2757,61 @@ def _power_wrapper_command(
                     j += 1
                     continue
                 if tok in _SUDO_VALUE_LONGS or tok.startswith("--"):
-                    if tok in ("--unset", "--chdir", "--split-string"):
+                    # v1.17.0: --split-string is -S spelled long, and
+                    # its value was consumed here without ever being
+                    # scanned (`env --split-string 'bash -c reboot'`
+                    # sailed through). It is a split string of its
+                    # own, scanned the same way — separate word or
+                    # = form. --unset / --chdir take a plain value.
+                    if tok == "--split-string":
+                        if j + 1 >= len(words):
+                            return ("args", None)
+                        if _split_string_runs_power(
+                            words[j + 1], depth + 1
+                        ):
+                            return ("block", None)
+                        j += 2
+                    elif tok.startswith("--split-string="):
+                        if _split_string_runs_power(
+                            tok.split("=", 1)[1], depth + 1
+                        ):
+                            return ("block", None)
+                        j += 1
+                    elif tok in ("--unset", "--chdir"):
                         j += 2
                     else:
                         j += 1
                     continue
-                j += 1
+                # v1.17.0: a value-taking short inside a cluster
+                # (`-iS '...'` / `-iS'...'`): the exact and attached
+                # checks above only see a leading -S / -u / -C, so
+                # walk the cluster — S scans its split-string value
+                # (the rest of the cluster, or the next word), u / C
+                # consume their value, anything else is boolean.
+                k = 1
+                value_taken = False
+                while k < len(tok):
+                    c = tok[k]
+                    if c == "S":
+                        if k + 1 < len(tok):
+                            val = tok[k + 1:]
+                            j += 1
+                        elif j + 1 < len(words):
+                            val = words[j + 1]
+                            j += 2
+                        else:
+                            return ("args", None)
+                        if _split_string_runs_power(val, depth + 1):
+                            return ("block", None)
+                        value_taken = True
+                        break
+                    if c in "uC":
+                        j += 1 if k + 1 < len(tok) else 2
+                        value_taken = True
+                        break
+                    k += 1
+                if not value_taken:
+                    j += 1
                 continue
             if _ASSIGN_RE.match(tok):
                 j += 1
@@ -3134,32 +3184,36 @@ def _power_wrapper_command(
 def _split_string_runs_power(value: str, depth: int = 0) -> bool:
     """True if an env -S split-string runs a power command.
 
-    The string is split the way env splits it; leading assignments
-    are skipped, and a wrapper first word resolves through the same
-    wrapper logic (so `sudo reboot` and chained wrappers count).
-    Depth-capped: each nesting level strips at least one word.
+    v1.17.0: the v1.13.0 version only looked at the split string's
+    first word, so an interpreter behind it sailed through
+    (`env -S 'bash -c reboot'`, `env -S 'python3 -c
+    "import os; os.system(\\"reboot\\")"'`). The split string is
+    argv, not a shell line, so it is split the way env splits it
+    (shlex, which matches env's quote/backslash handling) and the
+    resulting command is scanned with the full checks — the same
+    checks a directly typed command gets, so shell / interpreter
+    -c / -e code, wrappers, chained wrappers, and nested env -S
+    strings are all caught, while a power word that is only an
+    argument (`env -S 'echo reboot'`, `env -S 'grep -r reboot
+    /etc'`) stays allowed. A quoted separator inside an argument
+    is still treated as a separator by the command-position scan,
+    exactly as the same text is at top level (`echo 'hi;' reboot`
+    blocks there too), so `env -S 'echo hi; reboot'` blocks as
+    well. Unbalanced quotes make shlex fail; env would refuse
+    such a string, but the check fails closed and scans the raw
+    value. Depth-capped, and each nesting level's split string is
+    a strictly shorter substring of its parent, so recursion
+    always terminates.
     """
     if depth >= _NESTED_MAX_DEPTH:
         return False
-    words = value.split()
-    i = 0
-    while i < len(words):
-        w = words[i]
-        if _ASSIGN_RE.match(w):
-            i += 1
-            continue
-        if w.lower() in _POWER_WORDS:
-            return True
-        if w in _POWER_WRAPPERS:
-            kind, idx = _power_wrapper_command(words, i, depth + 1)
-            if kind == "block":
-                return True
-            if kind == "args":
-                return False
-            i = idx
-            continue
+    try:
+        argv = shlex.split(value)
+    except ValueError:
+        return _check_all(value, None, depth + 1) is not None
+    if not argv:
         return False
-    return False
+    return _check_all(shlex.join(argv), None, depth + 1) is not None
 
 
 def _segment_command_power(segment: str) -> bool:
@@ -3353,7 +3407,12 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     with runuser's -c / --command / --session-command value
     scanned as a shell command string of its own, and the shell /
     interpreter -c extraction and the fragmented-name splice
-    extended past them the same way.
+    extended past them the same way, then (v1.17.0) the env -S /
+    --split-string split string scanned with the full checks (it
+    is argv, split the way env splits it), so interpreter -c /
+    -e code behind it is caught, with --split-string checked the
+    same way and -S found inside a short-option cluster
+    (`-iS '...'`).
     """
     if ALLOW_DANGEROUS:
         return None
