@@ -48,7 +48,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.17.0"
+VERSION = "1.18.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1857,25 +1857,200 @@ _SINK_RES: dict[str, re.Pattern] = {
 }
 
 
-def _sink_shell_strings(lang: str, code: str) -> list[str]:
+# ---------------------------------------------------------------------------
+# v1.18.0: variable-valued sink arguments
+# ---------------------------------------------------------------------------
+# v1.11.0 left this as a noted gap: a sink whose first argument is a
+# variable was skipped as unknowable, so `cmd='shutdown -h now';
+# python3 -c "import os; os.system('$cmd')"` and `python3 -c
+# "import os; cmd='shutdown -h now'; os.system(cmd)"` both sailed
+# through — the value is visible in the same command, the sink runs
+# it, and the denylist never saw it. The fix resolves the variable
+# the same way v1.11.0 resolves variable-only command strings: from
+# a literal assignment in the code itself (`cmd = '...'` /
+# `cmd = ['...']` / `$cmd = '...'`) or, for a `$name` form, from a
+# shell assignment in the same command (`cmd='...'`, which is how
+# the value got into a double-quoted code string). A string-literal
+# argument holding a `$name` is scanned both raw and with visible
+# shell values substituted in, since a double-quoted code string
+# interpolates them before the interpreter sees it. A variable with
+# no visible value is opaque and blocked, exactly like a
+# variable-only -c string since v1.11.0: the program it will run is
+# unknowable. Expressions stay skipped (`os.system(sys.argv[1])`,
+# `os.system(cmd + ' -la')`): only a bare variable as the whole
+# first argument resolves. This pass can only add blocks, never
+# remove one.
+
+
+_CODE_ASSIGN_RES: dict[str, re.Pattern] = {
+    "python": re.compile(r"(?<![.\w])([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)"),
+    "ruby": re.compile(r"(?<![.\w])([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)"),
+    "node": re.compile(r"(?<![.\w])([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)"),
+    "perl": re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)"),
+    "php": re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)"),
+}
+
+_SHELL_VAR_REF_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def _assigned_code_literals(lang: str, code: str) -> dict[str, str]:
+    """Literal VAR = 'value' assignments visible in `code`.
+
+    Only string literals count (and string lists, joined with
+    spaces, for `subprocess`-style argv variables): anything else
+    could be any value, so it is not a known value. A later
+    assignment wins. `==` and attribute assignments (`a.b = 'x'`)
+    do not count.
+    """
+    out: dict[str, str] = {}
+    parse_fn = _parse_python_string if lang == "python" else _parse_c_string
+    for m in _CODE_ASSIGN_RES[lang].finditer(code):
+        k = m.end()
+        while k < len(code) and code[k] in " \t\r\n":
+            k += 1
+        if k < len(code) and code[k] in "[(":
+            parsed = _parse_string_list(code, k, parse_fn)
+            if parsed is not None:
+                out[m.group(1)] = parsed[0]
+            continue
+        parsed = parse_fn(code, k)
+        if parsed is not None:
+            out[m.group(1)] = parsed[0]
+    return out
+
+
+def _substitute_shell_vars(value: str, shell_assigns: dict[str, str]) -> Optional[str]:
+    """`value` with visible `$name` refs replaced, or None if none.
+
+    Only refs with a literal shell assignment in the same command
+    are replaced; anything else stays as-is. A double-quoted code
+    string interpolates these before the interpreter sees it; a
+    single-quoted one does not, so this errs toward blocking when
+    a dangerous value is visible in the same command, the same
+    approximation v1.11.0 makes for variable-only -c strings.
+    """
+    found = False
+
+    def repl(m: re.Match) -> str:
+        nonlocal found
+        name = m.group(1) or m.group(2)
+        if name in shell_assigns:
+            found = True
+            return shell_assigns[name]
+        return m.group(0)
+
+    new = _SHELL_VAR_REF_RE.sub(repl, value)
+    return new if found else None
+
+
+def _sink_arg_variable(
+    lang: str,
+    code: str,
+    k: int,
+    shell_assigns: dict[str, str],
+    code_assigns: dict[str, str],
+) -> tuple[Optional[str], bool]:
+    """Resolve a variable first argument at `k`, or (None, opaque?).
+
+    Returns (value, False) when the argument is a variable with a
+    visible literal value, (None, True) when it is a variable with
+    no visible value, and (None, False) when it is not a variable
+    argument at all (an expression, a call, ...), which stays
+    skipped as before. A `$name` / `${name}` form resolves from a
+    code assignment first (a native perl/php `$var`) and then from
+    a shell assignment (interpolation into a double-quoted code
+    string); a bare name resolves from a code assignment only — a
+    bare word is never shell-interpolated. The variable must be the
+    whole first argument: a trailing `.`, `+`, `->`, or similar
+    makes it an expression, not the variable itself.
+    """
+    if k < len(code) and code[k] == "$":
+        m = re.match(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)", code[k:])
+        if not m:
+            return None, False
+        rest = code[k + m.end():].lstrip(" \t\r\n")
+        if rest and rest[0] not in ",);":
+            return None, False
+        name = m.group(1) or m.group(2)
+        if name in code_assigns:
+            return code_assigns[name], False
+        if name in shell_assigns:
+            return shell_assigns[name], False
+        return None, True
+    m = re.match(r"[A-Za-z_][A-Za-z0-9_]*", code[k:])
+    if not m:
+        return None, False
+    rest = code[k + m.end():].lstrip(" \t\r\n")
+    if rest and rest[0] not in ",);":
+        return None, False
+    name = m.group(0)
+    if name in code_assigns:
+        return code_assigns[name], False
+    return None, True
+
+
+def _sink_first_arg(
+    lang: str,
+    code: str,
+    k: int,
+    shell_assigns: dict[str, str],
+    code_assigns: dict[str, str],
+) -> tuple[list[str], bool]:
+    """([shell strings], opaque?) for the first sink argument at `k`.
+
+    A string literal (or string list) scans as before, plus its
+    shell-substituted form when it holds a `$name` with a visible
+    shell value. A variable argument resolves via
+    `_sink_arg_variable`. Anything else (an expression, a call, a
+    non-string list element) stays skipped as before.
+    """
+    parse_fn = _parse_python_string if lang == "python" else _parse_c_string
+    if k < len(code) and code[k] in "[(":
+        parsed = _parse_string_list(code, k, parse_fn)
+        if parsed is not None:
+            return [parsed[0]], False
+        return [], False
+    parsed = parse_fn(code, k)
+    if parsed is not None:
+        values = [parsed[0]]
+        sub = _substitute_shell_vars(parsed[0], shell_assigns)
+        if sub is not None and sub != parsed[0]:
+            values.append(sub)
+        return values, False
+    value, is_opaque = _sink_arg_variable(lang, code, k, shell_assigns, code_assigns)
+    if value is not None:
+        return [value], False
+    return [], is_opaque
+
+
+def _sink_shell_strings(
+    lang: str,
+    code: str,
+    shell_assigns: Optional[dict[str, str]] = None,
+    code_assigns: Optional[dict[str, str]] = None,
+) -> tuple[list[str], bool]:
     """Shell command strings a sink in `code` will execute.
 
     Paren form: the first argument, string or string list. Bare form
     (perl/ruby/php): a string argument with no parens. Backtick and
-    %x/qx forms (perl/ruby/php) are shell code directly. Anything
-    whose program is a variable is unknowable and skipped (noted
-    gap, not a claimed block).
+    %x/qx forms (perl/ruby/php) are shell code directly. The second
+    return value is True when a sink takes a variable argument with
+    no visible value (opaque): the program it will run is
+    unknowable, so the caller blocks it rather than waving it
+    through.
     """
     out: list[str] = []
-    parse_fn = _parse_python_string if lang == "python" else _parse_c_string
+    opaque = False
+    shell_assigns = shell_assigns or {}
+    code_assigns = code_assigns or {}
     for m in _SINK_RES[lang].finditer(code):
         k = m.end()
         while k < len(code) and code[k] in " \t\r\n":
             k += 1
         if lang in ("perl", "ruby", "php") and k < len(code) and code[k] != "(":
-            parsed = parse_fn(code, k)
-            if parsed is not None:
-                out.append(parsed[0])
+            values, is_opaque = _sink_first_arg(lang, code, k, shell_assigns, code_assigns)
+            out.extend(values)
+            opaque = opaque or is_opaque
             continue
         if lang in ("perl", "ruby", "php"):
             # Bare-word pattern: the paren itself is still to consume.
@@ -1884,19 +2059,12 @@ def _sink_shell_strings(lang: str, code: str) -> list[str]:
             k += 1
             while k < len(code) and code[k] in " \t\r\n":
                 k += 1
-        # python/node patterns already consumed the opening paren,
-        # so k is already inside the argument list here.
-        if k < len(code) and code[k] in "[(":
-            parsed = _parse_string_list(code, k, parse_fn)
-            if parsed is not None:
-                out.append(parsed[0])
-            continue
-        parsed = parse_fn(code, k)
-        if parsed is not None:
-            out.append(parsed[0])
+        values, is_opaque = _sink_first_arg(lang, code, k, shell_assigns, code_assigns)
+        out.extend(values)
+        opaque = opaque or is_opaque
     if lang in ("perl", "ruby", "php"):
         out.extend(_backtick_shell_strings(code, lang))
-    return out
+    return out, opaque
 
 
 def _backtick_shell_strings(code: str, lang: str) -> list[str]:
@@ -2036,17 +2204,25 @@ def _is_wipe_target_value(value: str) -> bool:
 
 
 def _check_interpreter_code(
-    lang: str, code: str, cwd: Optional[Path] = None, depth: int = 0
+    lang: str, code: str, cwd: Optional[Path] = None, depth: int = 0,
+    shell_assigns: Optional[dict[str, str]] = None,
 ) -> Optional[str]:
     """Denylist pass over one interpreter code string.
 
     Each shell string a sink will execute gets the full shell checks
     (so `os.system("bash -c 'shutdown -h now'")` stacks through the
-    -c pass), then the direct wipe calls are checked.
+    -c pass), then the direct wipe calls are checked. A sink whose
+    first argument is a variable with no visible value is opaque:
+    the program it will run is unknowable, so it is blocked rather
+    than waved through.
     """
     if depth >= _NESTED_MAX_DEPTH:
         return None
-    for shell_cmd in _sink_shell_strings(lang, code):
+    code_assigns = _assigned_code_literals(lang, code)
+    shell_cmds, opaque = _sink_shell_strings(lang, code, shell_assigns, code_assigns)
+    if opaque:
+        return "opaque sink argument (variable value not visible)"
+    for shell_cmd in shell_cmds:
         label = _check_all(shell_cmd, cwd, depth + 1)
         if label:
             return label
@@ -2064,6 +2240,7 @@ def _check_interpreter_strings(
     """
     if depth >= _NESTED_MAX_DEPTH:
         return None
+    shell_assigns = _assigned_literals(command)
     for lang, code in _extract_interpreter_code(command):
         resolved = _variable_only_resolution(code, command)
         if resolved is not None:
@@ -2071,7 +2248,7 @@ def _check_interpreter_strings(
             if kind == "opaque":
                 return "opaque interpreter code string (variable value not visible)"
             code = value
-        label = _check_interpreter_code(lang, code, cwd, depth + 1)
+        label = _check_interpreter_code(lang, code, cwd, depth + 1, shell_assigns)
         if label:
             return label
     return None
@@ -2280,6 +2457,7 @@ def _check_heredocs(
     kinds = _stdin_consumers(command)
     if not kinds:
         return None
+    shell_assigns = _assigned_literals(command)
     for _kind, body in bodies:
         if not body.strip():
             continue
@@ -2296,7 +2474,7 @@ def _check_heredocs(
         for lang in kinds:
             if lang == "shell":
                 continue
-            label = _check_interpreter_code(lang, scan_body, cwd, depth + 1)
+            label = _check_interpreter_code(lang, scan_body, cwd, depth + 1, shell_assigns)
             if label:
                 return label
     return None

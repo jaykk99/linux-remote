@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.18.0 — 2026-11-07
+- Variable-valued sink arguments resolved (literal assignment in the code or in the same shell command, `$name` inside a string literal substituted from shell values); a sink argument that is a variable with no visible value is blocked as opaque.
+
 ## 1.17.0 — 2026-11-06
 - env -S / --split-string split strings scanned with the full checks (they are argv, split the way env splits them), so interpreter -c / -e code behind them is caught; --split-string checked the same way and -S found inside a short-option cluster (`-iS '...'`).
 

@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.17.0"
+    assert r.json()["version"] == "1.18.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1836,4 +1836,64 @@ def test_dangerous_blocked_v117(client, command):
     ],
 )
 def test_benign_still_allowed_v117(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# ---------------------------------------------------------------------------
+# v1.18.0: variable-valued sink arguments
+# ---------------------------------------------------------------------------
+# v1.11.0 left this as a noted gap: a sink whose first argument is a
+# variable was skipped as unknowable. The value is visible in the
+# same command (a literal assignment in the code, or a shell
+# assignment that a double-quoted code string interpolates), the sink
+# runs it, and the denylist never saw it.
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Shell-interpolated variable inside a string-literal sink arg.
+        "cmd='shutdown -h now'; python3 -c \"import os; os.system('$cmd')\"",
+        "cmd='shutdown -h now'; python3 -c \"import os; os.system(\\\"${cmd}\\\")\"",
+        # Variable assigned in the code itself, then passed to a sink.
+        "python3 -c \"import os; cmd='shutdown -h now'; os.system(cmd)\"",
+        "python3 -c \"import os; cmd='poweroff'; os.system(cmd)\"",
+        "python3 -c \"import os; cmd='rm -rf /'; os.system(cmd)\"",
+        "python3 -c \"import subprocess; cmd='shutdown -h now'; subprocess.run(cmd, shell=True)\"",
+        "python3 -c \"import subprocess; cmd=['rm', '-rf', '/']; subprocess.run(cmd)\"",
+        "node -e \"const {execSync}=require('child_process'); cmd='halt'; execSync(cmd)\"",
+        # Native $ variables in perl / ruby / php, from a shell assignment.
+        "cmd='reboot'; perl -e 'system $cmd'",
+        "cmd='poweroff'; ruby -e 'system $cmd'",
+        "cmd='reboot'; php -r 'system($cmd);'",
+        # Heredoc-fed code: variable assigned in the body.
+        "python3 <<'EOF'\nimport os\ncmd='shutdown -h now'\nos.system(cmd)\nEOF",
+        # A variable sink argument with no visible value is opaque.
+        "python3 -c \"import os; os.system(cmd)\"",
+        "cmd='reboot'; python3 -c \"import os; os.system(other_cmd)\"",
+    ],
+)
+def test_dangerous_blocked_v118(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Benign values resolve and stay allowed.
+        "python3 -c \"import os; cmd='ls -la'; os.system(cmd)\"",
+        "cmd='ls /tmp'; python3 -c \"import os; os.system('$cmd')\"",
+        "python3 -c \"import subprocess; cmd=['ls', '-la']; subprocess.run(cmd)\"",
+        "perl -e 'system \"ls -la\"'",
+        "node -e \"const {execSync}=require('child_process'); execSync('ls -la')\"",
+        # Expressions stay skipped, not resolved as variables.
+        "python3 -c \"import os,sys; os.system(sys.argv[1])\"",
+        "python3 -c \"import os; os.system(os.environ['X'])\"",
+        "python3 -c \"import os; cmd='echo hi'; os.system(cmd + ' there')\"",
+        # A $var with no visible assignment stays as-is.
+        "python3 -c \"import os; os.system('echo $HOME')\"",
+    ],
+)
+def test_benign_still_allowed_v118(client, command):
     assert server.check_dangerous(command) is None, command
