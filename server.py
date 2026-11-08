@@ -48,7 +48,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.18.0"
+VERSION = "1.19.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1528,7 +1528,7 @@ def _skip_wrappers(words: list[tuple[str, str, int, int]]) -> Optional[int]:
     return None
 
 
-def _split_top_level(command: str) -> list[str]:
+def _split_top_level(command: str, split_pipes: bool = True) -> list[str]:
     """Split `command` on top-level separators only.
 
     Unlike `_segments`, separators inside quotes, backticks, $(),
@@ -1537,7 +1537,10 @@ def _split_top_level(command: str) -> list[str]:
     code string, not to the outer command, and splitting there
     would lose the sink call. Newlines count as separators (a
     multiline command runs line by line); a backslash-newline is a
-    continuation, not a separator.
+    continuation, not a separator. With split_pipes False a single
+    `|` (and `|&`) is not a separator, so a whole pipeline stays
+    one piece for the xargs pass, which splits it into stages
+    itself.
     """
     parts: list[str] = []
     start = 0
@@ -1593,6 +1596,14 @@ def _split_top_level(command: str) -> list[str]:
                 parts.append(command[start:i])
                 i += 2
                 start = i
+                continue
+            if not split_pipes and command[i:i + 2] == "|&":
+                # A stderr pipe is not a separator here: the & of
+                # |& must not split on its own either.
+                i += 2
+                continue
+            if ch == "|" and not split_pipes:
+                i += 1
                 continue
             if ch in ";|&\n":
                 parts.append(command[start:i])
@@ -3494,13 +3505,697 @@ def _check_command_position_power(command: str) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# v1.19.0: echo / printf piped into xargs
+# ---------------------------------------------------------------------------
+# The denylist scanned the shell line as written, but xargs runs a
+# command composed from its input, so the wipe target (or the whole
+# command) can arrive as data: `echo / | xargs rm -rf` runs
+# `rm -rf /`, and `echo 'rm -rf /' | xargs -I{} sh -c '{}'` runs
+# `sh -c 'rm -rf /'`, yet no check ever saw either composed
+# command — the target is data on the left of the pipe, the rm -rf
+# on the right. The fix composes the command xargs will actually
+# run and scans it with the full checks, when the input is literal
+# in the same command: an echo / printf feeder (simulated from its
+# arguments), a herestring, or a heredoc feeding xargs (or feeding
+# a cat that feeds xargs). A bare `echo 'rm -rf /' | xargs` stays
+# allowed: with no command xargs runs echo (verified against the
+# local xargs), so the data is only ever printed, never executed.
+#
+# Semantics follow the local tools, verified by running them:
+# /bin/sh is dash, so a bare `echo` is dash's builtin (escapes
+# interpreted by default, only -n is a flag, -e is literal text);
+# /bin/echo is coreutils (escapes only with -e). xargs splits its
+# input on blanks with quote/backslash processing (an unmatched
+# quote makes it error out and run nothing), on NULs with -0, on
+# the -d delimiter (whose value has its escapes decoded, so '-d
+# \\n' is a newline), and -E truncates at the first matching line.
+# -I replaces the string in the initial args with each input line
+# (blank lines skipped, a line with spaces stays one argument);
+# the command word itself is never substituted, and with no
+# placeholder in the args the line is dropped, not appended.
+# Batching flags (-n / -L / -P / -s) only split runs, so they are
+# consumed and ignored: the full word list is composed and
+# scanned, which is fail-closed against any single batch. Shell
+# values visible in the same command are substituted into feeder
+# words (the v1.18.0 approximation: quoting is not tracked, so a
+# single-quoted $var is substituted too — it errs toward blocking,
+# never toward missing a visible value).
+#
+# What stays a noted gap, not a claimed block: input that is not
+# visible in the command — find / ls output, a file (`cat file |
+# xargs ...`, `xargs -a file ...`), a variable with no visible
+# assignment, a heredoc when the command has more than one (its
+# body cannot be attributed to one stage), and -d with a value
+# that does not decode to exactly one char. This pass can only
+# add blocks, never remove one.
+
+
+def _split_pipes(piece: str) -> list[str]:
+    """Split `piece` into pipeline stages on top-level | / |& only.
+
+    Mirrors _split_top_level's quote/paren tracking: a | inside
+    quotes, backticks, $(), ${} or a subshell is not a pipe, and ||
+    is a separator, not a pipe.
+    """
+    parts: list[str] = []
+    start = 0
+    i = 0
+    n = len(piece)
+    paren = 0
+    brace = 0
+    while i < n:
+        ch = piece[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "'":
+            i = _skip_squote(piece, i)
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n:
+                if piece[j] == "\\" and j + 1 < n:
+                    j += 2
+                    continue
+                if piece[j] == '"':
+                    j += 1
+                    break
+                j += 1
+            i = j
+            continue
+        if ch == "$" and i + 1 < n and piece[i + 1] == "'":
+            i = _skip_ansi_c(piece, i)
+            continue
+        if ch == "`":
+            close = _backtick_close(piece, i)
+            i = n if close is None else close + 1
+            continue
+        if ch == "(":
+            paren += 1
+            i += 1
+            continue
+        if ch == ")":
+            paren = max(0, paren - 1)
+            i += 1
+            continue
+        if ch == "{":
+            brace += 1
+            i += 1
+            continue
+        if ch == "}":
+            brace = max(0, brace - 1)
+            i += 1
+            continue
+        if paren == 0 and brace == 0:
+            if piece[i:i + 2] == "||":
+                i += 2
+                continue
+            if piece[i:i + 2] == "|&" or ch == "|":
+                parts.append(piece[start:i])
+                i += 2 if piece[i:i + 2] == "|&" else 1
+                start = i
+                continue
+        i += 1
+    parts.append(piece[start:])
+    return parts
+
+
+def _decode_backslash_escapes(text: str, hex_ok: bool) -> tuple[str, bool]:
+    """Decode \\a \\b \\f \\n \\r \\t \\v \\\\ \\e \\0ooo (and \\xHH
+    when hex_ok) in `text`. Returns (decoded, stopped): \\c stops
+    output here, so the caller drops everything after it (and, for
+    echo, the trailing newline). An unknown escape stays literal,
+    the way dash leaves it. \\x is only decoded when hex_ok: dash
+    echo does not decode it, so decoding it there would turn a
+    literal '\\x2f' into a slash that is never a slash at runtime.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    simple = {
+        "a": "\x07", "b": "\x08", "e": "\x1b", "f": "\x0c",
+        "n": "\n", "r": "\r", "t": "\t", "v": "\x0b",
+        "\\": "\\", "'": "'", '"': '"',
+    }
+    while i < n:
+        ch = text[i]
+        if ch != "\\" or i + 1 >= n:
+            out.append(ch)
+            i += 1
+            continue
+        esc = text[i + 1]
+        if esc == "c":
+            return "".join(out), True
+        if esc in simple:
+            out.append(simple[esc])
+            i += 2
+        elif esc == "0":
+            j = i + 1
+            digits = ""
+            while j < n and len(digits) < 3 and text[j] in "01234567":
+                digits += text[j]
+                j += 1
+            out.append(chr(int(digits, 8) & 0xFF))
+            i = j
+        elif esc == "x" and hex_ok:
+            j = i + 2
+            digits = ""
+            while j < n and len(digits) < 2 and text[j] in "0123456789abcdefABCDEF":
+                digits += text[j]
+                j += 1
+            if digits:
+                out.append(chr(int(digits, 16)))
+                i = j
+            else:
+                out.append("x")
+                i += 2
+        else:
+            out.append("\\")
+            out.append(esc)
+            i += 2
+    return "".join(out), False
+
+
+def _echo_output_text(
+    args: list[str], raw_word: str, shell_assigns: dict[str, str]
+) -> str:
+    """Stdout text of an echo feeder: its args joined with spaces.
+
+    A bare `echo` is dash's builtin (escapes decoded, only -n is
+    a flag); an absolute path is coreutils echo (escapes only
+    with -e, -n / -e / -E may cluster). Shell values visible in
+    the same command are substituted into the words first.
+    """
+    builtin = "/" not in raw_word
+    decode = builtin
+    newline = True
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if builtin:
+            if a == "-n":
+                newline = False
+                i += 1
+                continue
+            break
+        if len(a) > 1 and a[0] == "-" and all(c in "neE" for c in a[1:]):
+            if "n" in a:
+                newline = False
+            if "e" in a:
+                decode = True
+            if "E" in a:
+                decode = False
+            i += 1
+            continue
+        break
+    words: list[str] = []
+    for a in args[i:]:
+        sub = _substitute_shell_vars(a, shell_assigns)
+        words.append(sub if sub is not None else a)
+    text = " ".join(words)
+    if decode:
+        text, stopped = _decode_backslash_escapes(text, hex_ok=False)
+        if stopped:
+            return text
+    if newline:
+        text += "\n"
+    return text
+
+
+def _printf_once(fmt: str, args: list[str]) -> tuple[str, int]:
+    """One pass of the format over `args`; returns (text, used).
+
+    Only the directives a feeder plausibly uses are modelled
+    exactly (%s %d %i %c %x %o %b %%); anything else consumes an
+    argument and yields it as-is, so the text stays visible
+    rather than vanishing. A directive with no argument left
+    yields its empty / zero default.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(fmt)
+    used = 0
+    while i < n:
+        ch = fmt[i]
+        if ch != "%" or i + 1 >= n:
+            out.append(ch)
+            i += 1
+            continue
+        if fmt[i + 1] == "%":
+            out.append("%")
+            i += 2
+            continue
+        j = i + 1
+        while j < n and fmt[j] in "-+ #0":
+            j += 1
+        while j < n and fmt[j].isdigit():
+            j += 1
+        if j < n and fmt[j] == ".":
+            j += 1
+            while j < n and fmt[j].isdigit():
+                j += 1
+        if j >= n:
+            out.append("%")
+            i += 1
+            continue
+        conv = fmt[j]
+        arg = args[used] if used < len(args) else None
+        if conv == "s":
+            out.append(arg if arg is not None else "")
+            used += 1
+        elif conv in "di":
+            try:
+                out.append(str(int(arg, 10)) if arg is not None else "0")
+            except ValueError:
+                out.append("0")
+            used += 1
+        elif conv == "c":
+            out.append(arg[0] if arg else "")
+            used += 1
+        elif conv in "xX":
+            try:
+                v = int(arg, 10) if arg is not None else 0
+                out.append(format(v, "x" if conv == "x" else "X"))
+            except ValueError:
+                out.append("0")
+            used += 1
+        elif conv == "o":
+            try:
+                v = int(arg, 10) if arg is not None else 0
+                out.append(format(v, "o"))
+            except ValueError:
+                out.append("0")
+            used += 1
+        elif conv == "b":
+            decoded, _stopped = _decode_backslash_escapes(
+                arg if arg is not None else "", hex_ok=True
+            )
+            out.append(decoded)
+            used += 1
+        else:
+            out.append(arg if arg is not None else "")
+            used += 1
+        i = j + 1
+    return "".join(out), used
+
+
+def _printf_output_text(args: list[str], shell_assigns: dict[str, str]) -> str:
+    """Stdout text of a printf feeder: format filled from its args.
+
+    The format is reused cyclically while arguments remain, the
+    way printf does; a format with no directives prints once and
+    ignores extra arguments. Backslash escapes in the format (and
+    in %b arguments) are decoded; \\c stops output.
+    """
+    if not args:
+        return ""
+    fmt = args[0]
+    sub = _substitute_shell_vars(fmt, shell_assigns)
+    if sub is not None:
+        fmt = sub
+    fmt, stopped = _decode_backslash_escapes(fmt, hex_ok=True)
+    if stopped:
+        return fmt
+    fmt_args = [
+        _substitute_shell_vars(a, shell_assigns) or a for a in args[1:]
+    ]
+    out: list[str] = []
+    argi = 0
+    while True:
+        chunk, used = _printf_once(fmt, fmt_args[argi:])
+        out.append(chunk)
+        argi += used
+        if argi >= len(fmt_args) or used == 0:
+            break
+    return "".join(out)
+
+
+_XARGS_VALUE_SHORTS = set("adEILnPs")
+_XARGS_OPTIONAL_SHORTS = set("eil")
+_XARGS_BOOL_SHORTS = set("orptx0")
+_XARGS_VALUE_LONGS = {
+    "--arg-file", "--delimiter", "--max-args", "--max-lines",
+    "--max-procs", "--max-chars", "--process-slot-var",
+}
+_XARGS_OPTIONAL_LONGS = {"--eof", "--replace"}
+_XARGS_BOOL_LONGS = {
+    "--null", "--no-run-if-empty", "--verbose", "--exit",
+    "--open-tty", "--interactive", "--show-limits", "--help",
+    "--version",
+}
+
+
+def _xargs_delimiter(value: Optional[str]) -> str:
+    """The single delimiter char of a -d value, or "" if unknowable.
+
+    xargs decodes backslash escapes in the value, so '-d \\n' is
+    a newline, not a backslash. "" means the invocation cannot be
+    composed and is skipped, never silently split another way.
+    """
+    if value is None:
+        return ""
+    if len(value) == 1:
+        return value
+    decoded, _stopped = _decode_backslash_escapes(value, hex_ok=True)
+    return decoded if len(decoded) == 1 else ""
+
+
+def _apply_xargs_value(parsed: dict, flag: str, value: Optional[str]) -> None:
+    """Apply one xargs value-taking flag to `parsed`."""
+    if flag in ("-a", "--arg-file"):
+        parsed["arg_file"] = True
+    elif flag in ("-d", "--delimiter"):
+        parsed["delimiter"] = _xargs_delimiter(value)
+    elif flag in ("-E", "--eof", "-e"):
+        # -E takes its value (separate word or attached); -e /
+        # --eof with no = value means no EOF string.
+        parsed["eof"] = value
+    elif flag in ("-I", "--replace", "-i"):
+        parsed["replace"] = value if value is not None else "{}"
+    # -L / -l / -n / -P / -s only batch the runs; they never
+    # change what any single run executes, so their values are
+    # consumed and dropped.
+
+
+def _parse_xargs_args(words: list[str]) -> dict:
+    """Parse xargs's flags from `words` (after the xargs word).
+
+    Flag parsing follows xargs's own --help (verified locally):
+    -a / -d / -E / -I / -L / -n / -P / -s take a required value
+    (rest of the cluster, or the next word); -e / -i / -l take
+    an optional value (rest of the cluster only, defaulting to no
+    EOF string / "{}" / one line); -o / -p / -r / -t / -x / -0
+    are boolean. Long flags take = values, or the next word when
+    the value is required; --eof / --replace take a value only in
+    = form. `--` ends the flags. An unknown flag is skipped as
+    one token, the same convention as the wrapper parsers. The
+    result holds the command word xargs will run (None when it
+    defaults to echo), its initial args, and the input-shaping
+    flags: -I replace string, -0, -d delimiter ("" when the
+    value did not decode to one char), -E eof string, -a (input
+    from a file), -r.
+    """
+    parsed = {
+        "command": None,
+        "initial_args": [],
+        "replace": None,
+        "null": False,
+        "delimiter": None,
+        "eof": None,
+        "arg_file": False,
+        "no_run_if_empty": False,
+    }
+    i = 0
+    n = len(words)
+    while i < n:
+        tok = words[i]
+        if tok == "--":
+            i += 1
+            break
+        if tok.startswith("--"):
+            name, eq, val = tok.partition("=")
+            if name in _XARGS_BOOL_LONGS:
+                if name == "--null":
+                    parsed["null"] = True
+                elif name == "--no-run-if-empty":
+                    parsed["no_run_if_empty"] = True
+                i += 1
+                continue
+            if name in _XARGS_VALUE_LONGS:
+                if eq:
+                    value: Optional[str] = val
+                    i += 1
+                elif i + 1 < n:
+                    value = words[i + 1]
+                    i += 2
+                else:
+                    value = None
+                    i += 1
+                _apply_xargs_value(parsed, name, value)
+                continue
+            if name in _XARGS_OPTIONAL_LONGS:
+                value = val if eq else None
+                _apply_xargs_value(parsed, name, value)
+                i += 1
+                continue
+            # Unknown long flag: skip one token.
+            i += 1
+            continue
+        if tok.startswith("-") and tok != "-":
+            j = 1
+            consumed_next = False
+            while j < len(tok):
+                c = tok[j]
+                if c in _XARGS_BOOL_SHORTS:
+                    if c == "0":
+                        parsed["null"] = True
+                    elif c == "r":
+                        parsed["no_run_if_empty"] = True
+                    j += 1
+                    continue
+                if c in _XARGS_VALUE_SHORTS:
+                    if j + 1 < len(tok):
+                        value = tok[j + 1:]
+                    elif i + 1 < n:
+                        value = words[i + 1]
+                        consumed_next = True
+                    else:
+                        value = None
+                    _apply_xargs_value(parsed, "-" + c, value)
+                    j = len(tok)
+                    continue
+                if c in _XARGS_OPTIONAL_SHORTS:
+                    value = tok[j + 1:] if j + 1 < len(tok) else None
+                    _apply_xargs_value(parsed, "-" + c, value)
+                    j = len(tok)
+                    continue
+                # Unknown short letter: skip the whole cluster.
+                j = len(tok)
+            i += 2 if consumed_next else 1
+            continue
+        break
+    if i < n:
+        parsed["command"] = words[i]
+        parsed["initial_args"] = words[i + 1:]
+    return parsed
+
+
+def _stage_stdin_text(stage: str, heredoc_bodies: list[str]) -> Optional[str]:
+    """Input text arriving on `stage`'s stdin via <<< or <<, or None.
+
+    A herestring's word is inline; a heredoc's body is only
+    usable when the whole command has exactly one heredoc
+    (otherwise the body cannot be attributed to this stage). A
+    stage with both is ambiguous and yields None.
+    """
+    docs = _extract_heredocs(stage)
+    kinds = {kind for kind, _ in docs}
+    if "herestring" in kinds and "heredoc" in kinds:
+        return None
+    for kind, body in docs:
+        if kind == "herestring":
+            return body + "\n"
+    if "heredoc" in kinds:
+        if len(heredoc_bodies) == 1:
+            return heredoc_bodies[0]
+        return None
+    return None
+
+
+def _has_stdout_redirect(args: list[str]) -> bool:
+    """True if `args` redirect the command's stdout elsewhere.
+
+    A feeder whose stdout is redirected (`echo / > file | xargs
+    ...`) sends nothing down the pipe, so its simulated text
+    must not be composed: the pipe is empty. An unquoted `>`
+    word is a redirect; a quoted or escaped one decodes to the
+    same word, which errs toward an empty pipe — the safe side
+    for composition, since an empty input cannot hide a target.
+    """
+    return any(re.match(r"^\d*>", a) for a in args)
+
+
+def _feeder_input_text(
+    stage: str, heredoc_bodies: list[str], shell_assigns: dict[str, str]
+) -> Optional[str]:
+    """Stdout text of the stage feeding xargs, or None if unknowable.
+
+    Only literal feeders are modelled: echo / printf (simulated
+    from their arguments), and cat with its stdin from a heredoc
+    or herestring and no file arguments. Anything else (find, ls,
+    a file, a variable with no visible assignment) is unknowable:
+    the xargs invocation is skipped, a noted gap, not a claimed
+    block.
+    """
+    words = _segment_words(stage)
+    if not words:
+        return None
+    cmd_idx = _skip_wrappers(words)
+    if cmd_idx is None:
+        return None
+    raw, decoded, _s, _e = words[cmd_idx]
+    base = decoded.rsplit("/", 1)[-1]
+    args = [w[1] for w in words[cmd_idx + 1:]]
+    if _has_stdout_redirect(args):
+        return ""
+    if base == "echo":
+        return _echo_output_text(args, raw, shell_assigns)
+    if base == "printf":
+        return _printf_output_text(args, shell_assigns)
+    if base == "cat":
+        rest = _filter_redirect_words(args)
+        if any(not a.startswith("-") for a in rest):
+            return None  # reads a file: content not visible
+        return _stage_stdin_text(stage, heredoc_bodies)
+    return None
+
+
+def _truncate_at_eof(text: str, eof: Optional[str]) -> str:
+    """`text` up to (not including) the first line equal to `eof`."""
+    if eof is None:
+        return text
+    lines = text.split("\n")
+    for k, ln in enumerate(lines):
+        if ln == eof:
+            return "\n".join(lines[:k])
+    return text
+
+
+def _xargs_input_words(text: str, parsed: dict) -> Optional[list[str]]:
+    """Input items of `text` the way xargs splits them, or None.
+
+    -0 splits on NULs, -d on its delimiter, otherwise on blanks
+    with xargs's quote/backslash processing (shlex matches it: an
+    unmatched quote makes xargs error out and run nothing, so
+    that input yields None and the invocation is skipped). The
+    -E EOF string truncates the input at the first matching line.
+    Empty items are dropped: they cannot be a wipe target or a
+    power word.
+    """
+    if parsed["delimiter"] == "":
+        return None
+    if parsed["null"] and parsed["delimiter"] is not None:
+        return None  # -0 and -d together: xargs refuses
+    if parsed["null"]:
+        return [w for w in text.split("\0") if w]
+    if parsed["delimiter"] is not None:
+        return [w for w in text.split(parsed["delimiter"]) if w]
+    text = _truncate_at_eof(text, parsed["eof"])
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return None
+
+
+def _xargs_input_lines(text: str, parsed: dict) -> Optional[list[str]]:
+    """Input lines for -I mode, or None.
+
+    -I reads lines (blank lines are skipped, verified against
+    the local xargs); -0 / -d change the separator to NULs / the
+    delimiter, and -E truncates at the first matching line.
+    """
+    if parsed["delimiter"] == "":
+        return None
+    if parsed["null"] and parsed["delimiter"] is not None:
+        return None
+    if parsed["null"]:
+        parts = text.split("\0")
+        if parts and parts[-1] == "":
+            parts.pop()
+        return parts
+    if parsed["delimiter"] is not None:
+        parts = text.split(parsed["delimiter"])
+        if parts and parts[-1] == "":
+            parts.pop()
+        return parts
+    text = _truncate_at_eof(text, parsed["eof"])
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [ln for ln in lines if ln.strip()]
+
+
+def _check_xargs(
+    command: str, cwd: Optional[Path] = None, depth: int = 0
+) -> Optional[str]:
+    """Denylist pass over the command xargs composes from its input.
+
+    Per pipeline, an xargs stage's command and initial args are
+    parsed, the input text is taken from a herestring / heredoc
+    on the stage itself or from the preceding feeder stage, and
+    the composed command (command + initial args + input words,
+    or one command per input line with the -I string replaced)
+    gets the full checks. A stage with no command runs echo and
+    is safe; an unknowable input (find / ls / a file / an
+    unresolvable variable) skips that invocation. Depth-capped;
+    every composed string is strictly shorter than the command
+    it came from, so recursion always terminates.
+    """
+    if depth >= _NESTED_MAX_DEPTH:
+        return None
+    shell_assigns = _assigned_literals(command)
+    heredoc_bodies = [b for k, b in _extract_heredocs(command) if k == "heredoc"]
+    for piece in _split_top_level(command, split_pipes=False):
+        stages = _split_pipes(piece)
+        for k, stage in enumerate(stages):
+            words = _segment_words(stage)
+            if not words:
+                continue
+            cmd_idx = _skip_wrappers(words)
+            if cmd_idx is None:
+                continue
+            _raw, decoded, _s, _e = words[cmd_idx]
+            if decoded.rsplit("/", 1)[-1] != "xargs":
+                continue
+            parsed = _parse_xargs_args([w[1] for w in words[cmd_idx + 1:]])
+            if parsed["arg_file"]:
+                continue  # input from a file: noted gap
+            if parsed["command"] is None:
+                continue  # default command is echo: safe
+            text = _stage_stdin_text(stage, heredoc_bodies)
+            if text is None and k > 0:
+                text = _feeder_input_text(
+                    stages[k - 1], heredoc_bodies, shell_assigns
+                )
+            if text is None:
+                continue  # input not visible: noted gap
+            if parsed["replace"] is not None:
+                lines = _xargs_input_lines(text, parsed)
+                if lines is None:
+                    continue
+                for line in lines:
+                    args = [
+                        a.replace(parsed["replace"], line)
+                        for a in parsed["initial_args"]
+                    ]
+                    composed = shlex.join([parsed["command"]] + args)
+                    label = _check_all(composed, cwd, depth + 1)
+                    if label:
+                        return label
+            else:
+                input_words = _xargs_input_words(text, parsed)
+                if input_words is None:
+                    continue
+                if not input_words and parsed["no_run_if_empty"]:
+                    continue
+                composed = shlex.join(
+                    [parsed["command"]] + parsed["initial_args"] + input_words
+                )
+                label = _check_all(composed, cwd, depth + 1)
+                if label:
+                    return label
+    return None
+
+
 def _check_all(command: str, cwd: Optional[Path] = None, depth: int = 0) -> Optional[str]:
     """Every denylist pass over `command`, recursing into sub-strings.
 
     Raw, then command-word-normalized, then nested groups, -c /
     eval strings, interpreter code strings, heredoc bodies, power
-    words on later lines of a multiline command, and power words in
-    any command position — each pass only adds blocks. Sub-passes are depth-capped and every
+    words on later lines of a multiline command, power words in
+    any command position, and commands xargs composes from literal
+    piped input — each pass only adds blocks. Sub-passes are depth-capped and every
     sub-string they recurse into is strictly shorter than its
     parent, so recursion always terminates.
     """
@@ -3527,7 +4222,10 @@ def _check_all(command: str, cwd: Optional[Path] = None, depth: int = 0) -> Opti
     label = _check_multiline_power(command)
     if label:
         return label
-    return _check_command_position_power(command)
+    label = _check_command_position_power(command)
+    if label:
+        return label
+    return _check_xargs(command, cwd, depth)
 
 
 def _check_dangerous_once(command: str, cwd: Optional[Path] = None) -> Optional[str]:
@@ -3590,7 +4288,12 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     is argv, split the way env splits it), so interpreter -c /
     -e code behind it is caught, with --split-string checked the
     same way and -S found inside a short-option cluster
-    (`-iS '...'`).
+    (`-iS '...'`), then (v1.19.0) the same checks over the command
+    xargs composes from literal piped input (echo / printf /
+    heredoc / herestring feeding it, with -I template
+    substitution), so a wipe target or power command arriving as
+    data is caught, while a bare `echo ... | xargs` (which only
+    ever runs echo) stays allowed.
     """
     if ALLOW_DANGEROUS:
         return None

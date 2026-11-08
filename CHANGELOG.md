@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.19.0 — 2026-11-08
+- Commands xargs composes from literal piped input are scanned with the full checks (echo / printf feeders simulated from their arguments, herestring / heredoc input, -I template substitution), so a wipe target or power command arriving as data is caught; a bare `echo ... | xargs` (which only ever runs echo) stays allowed.
+
 ## 1.18.0 — 2026-11-07
 - Variable-valued sink arguments resolved (literal assignment in the code or in the same shell command, `$name` inside a string literal substituted from shell values); a sink argument that is a variable with no visible value is blocked as opaque.
 

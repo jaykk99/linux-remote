@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.18.0"
+    assert r.json()["version"] == "1.19.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1896,4 +1896,96 @@ def test_dangerous_blocked_v118(client, command):
     ],
 )
 def test_benign_still_allowed_v118(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# ---------------------------------------------------------------------------
+# v1.19.0: echo / printf piped into xargs
+# ---------------------------------------------------------------------------
+# The denylist scanned the shell line as written, but xargs runs a
+# command composed from its input: `echo / | xargs rm -rf` runs
+# `rm -rf /`, yet no check ever saw that command — the wipe target
+# is data on the left of the pipe, the `rm -rf` on the right. Same
+# for a -I template (`echo "rm -rf /" | xargs -I{} sh -c '{}'` runs
+# `sh -c 'rm -rf /'`). A bare `echo "rm -rf /" | xargs` stays
+# allowed: with no command xargs runs echo, so nothing dangerous
+# executes (verified against the local xargs).
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Target from the pipe, command from xargs: the composed
+        # command is the wipe.
+        "echo / | xargs rm -rf",
+        "echo / | xargs rm --recursive --force",
+        "echo -n / | xargs rm -rf",
+        "echo /tmp/x / | xargs rm -rf",
+        "echo / | xargs rm -rf --no-preserve-root",
+        "printf '/\\n' | xargs rm -rf",
+        "printf '%s\\n' / | xargs rm -rf",
+        # Power / wipe commands as the xargs command.
+        "echo '-h now' | xargs shutdown",
+        "echo /dev/sda | xargs shred",
+        "echo /dev/sda1 | xargs mkfs.ext4",
+        # -I template: the input line is substituted into the
+        # initial args, then the composed command is scanned.
+        "echo 'rm -rf /' | xargs -I{} sh -c '{}'",
+        "echo 'rm -rf /' | xargs -I CMD sh -c CMD",
+        "echo / | xargs -I{} rm -rf {}",
+        "echo reboot | xargs -I{} sh -c '{}'",
+        # Herestring / heredoc input to xargs.
+        "xargs rm -rf <<< '/'",
+        "xargs rm -rf <<EOF\n/\nEOF",
+        "cat <<EOF | xargs rm -rf\n/\nEOF",
+        # Behind a wrapper, and nested in a -c string.
+        "echo / | sudo xargs rm -rf",
+        "bash -c 'echo / | xargs rm -rf'",
+        # NUL-separated input: -0 splits on NULs, so a NUL after
+        # the slash is a real word boundary.
+        "printf '/\\0' | xargs -0 rm -rf",
+        # Shell value substituted into the echoed word.
+        "tgt='/'; echo $tgt | xargs rm -rf",
+    ],
+)
+def test_dangerous_blocked_v119(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # No command after xargs means xargs runs echo: the data is
+        # only ever printed, never executed.
+        "echo 'rm -rf /' | xargs",
+        "echo 'shutdown -h now' | xargs",
+        "printf 'rm -rf /\\n' | xargs",
+        # Named targets stay allowed, as always.
+        "echo /tmp/build | xargs rm -rf",
+        "echo hello | xargs rm -rf",
+        "echo / | xargs echo",
+        "echo / | xargs rm",
+        "echo 'hello world' | xargs -n1 echo",
+        "echo / | xargs -I{} echo {}",
+        # -I with no placeholder: the line is dropped, the template
+        # runs as written.
+        "echo 'rm -rf /' | xargs -I{} echo hi",
+        # -0: a newline inside the item is part of the word, not a
+        # separator, so '/\\n' is a filename, not the root.
+        "printf '/\\n' | xargs -0 rm -rf",
+        # Benign values substituted from the shell stay allowed.
+        "tgt='/tmp/build'; echo $tgt | xargs rm -rf",
+        "tgt='ls'; echo $tgt | xargs sh -c",
+        # Input that is not visible in the command is a noted gap,
+        # not a claimed block: find / ls / cat-file output, and a
+        # variable with no visible assignment.
+        "find . -name '*.tmp' | xargs rm -rf",
+        "ls | xargs rm -rf",
+        "cat list.txt | xargs rm -rf",
+        "xargs -a list.txt rm -rf",
+        "echo $target | xargs rm -rf",
+    ],
+)
+def test_benign_still_allowed_v119(client, command):
     assert server.check_dangerous(command) is None, command
