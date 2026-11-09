@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.19.0"
+    assert r.json()["version"] == "1.20.0"
 
 
 # ---------------------------------------------------------------------------
@@ -1988,4 +1988,81 @@ def test_dangerous_blocked_v119(client, command):
     ],
 )
 def test_benign_still_allowed_v119(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# ---------------------------------------------------------------------------
+# v1.20.0: variable wipe targets in direct wipe calls
+# ---------------------------------------------------------------------------
+# v1.11.0 only checked a literal first argument, so a variable
+# holding the target sailed through even when the value was visible
+# in the same code string; the `path=` keyword form and a second
+# wipe call after a benign first one slipped through the same way
+# (only the first match was ever examined). All three are blocked
+# now, with a variable resolved from a literal assignment in the
+# code (or, for a $name form, from a shell assignment in the same
+# command), and blocked as opaque when no value is visible.
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Variable target, literal value visible in the code.
+        "python3 -c \"import shutil; p = '/'; shutil.rmtree(p)\"",
+        "python3 -c \"import shutil; p = '..'; shutil.rmtree(p)\"",
+        "perl -e 'use File::Path qw(rmtree); $d = \"/\"; rmtree($d)'",
+        "perl -e 'use File::Path qw(rmtree); $d = \"/\"; rmtree $d'",
+        "ruby -e 'require \"fileutils\"; d = \"/\"; FileUtils.rm_rf(d)'",
+        "node -e \"const fs = require('fs'); const d = '/'; fs.rmSync(d, {recursive: true})\"",
+        "node -e \"require('fs').rmSync('/', {recursive: true})\"",
+        "node -e \"require('fs').rmSync(d, {recursive: true})\"",
+        # Keyword form, literal and variable.
+        "python3 -c \"import shutil; shutil.rmtree(path='/')\"",
+        "python3 -c \"import shutil; p = '/'; shutil.rmtree(path=p)\"",
+        # A benign first call no longer hides a wipe in a later one.
+        "python3 -c \"import shutil; shutil.rmtree('/tmp/build'); shutil.rmtree('/')\"",
+        "python3 -c \"import shutil; shutil.rmtree('/tmp/a'); shutil.rmtree(p)\"",
+        # Variable assigned from a home expression.
+        "python3 -c \"import shutil, os; p = os.path.expanduser('~'); shutil.rmtree(p)\"",
+        "perl -e 'use File::Path qw(rmtree); $d = $ENV{HOME}; rmtree($d)'",
+        "ruby -e 'require \"fileutils\"; d = Dir.home; FileUtils.rm_rf(d)'",
+        # Variable with no visible value: opaque, blocked.
+        "python3 -c \"import shutil; shutil.rmtree(target)\"",
+        "python3 -c \"import shutil; p = chr(47); shutil.rmtree(p)\"",
+        "perl -e 'use File::Path qw(rmtree); rmtree($d)'",
+        "ruby -e 'require \"fileutils\"; FileUtils.rm_rf(d)'",
+        "node -e \"const fs = require('fs'); fs.rmSync(d, {recursive: true})\"",
+        # $name resolved from a shell assignment in the same command
+        # (the v1.18.0 approximation: errs toward blocking).
+        "d='/'; perl -e 'use File::Path qw(rmtree); rmtree($d)'",
+        # Heredoc-fed code with a variable wipe target.
+        "python3 <<'PYEOF'\nimport shutil\np = '/'\nshutil.rmtree(p)\nPYEOF",
+    ],
+)
+def test_dangerous_blocked_v120(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # A variable holding a named target stays allowed, same as
+        # a literal named target.
+        "python3 -c \"import shutil; p = '/tmp/build'; shutil.rmtree(p)\"",
+        "python3 -c \"import shutil; shutil.rmtree(path='/tmp/build')\"",
+        "python3 -c \"import shutil; shutil.rmtree('/tmp/a'); shutil.rmtree('/tmp/b')\"",
+        "perl -e 'use File::Path qw(rmtree); $d = \"/tmp/build\"; rmtree($d)'",
+        "ruby -e 'require \"fileutils\"; d = \"/tmp/build\"; FileUtils.rm_rf(d)'",
+        "node -e \"const fs = require('fs'); const d = '/tmp/build'; fs.rmSync(d, {recursive: true})\"",
+        "node -e \"require('fs').rmSync('/tmp/build', {recursive: true})\","
+        # Node without `recursive` cannot wipe a directory, so an
+        # opaque target there stays allowed like a literal one.
+        "node -e \"const fs = require('fs'); fs.rmSync(d)\"",
+        "node -e \"const fs = require('fs'); fs.rmSync('/')\"",
+        # An expression target stays skipped, as before.
+        "python3 -c \"import shutil, os; shutil.rmtree(os.path.join('/tmp', 'build'))\"",
+    ],
+)
+def test_benign_still_allowed_v120(client, command):
     assert server.check_dangerous(command) is None, command

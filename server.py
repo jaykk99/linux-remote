@@ -48,7 +48,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.19.0"
+VERSION = "1.20.0"
 
 
 # ---------------------------------------------------------------------------
@@ -2151,54 +2151,186 @@ def _backtick_shell_strings(code: str, lang: str) -> list[str]:
     return out
 
 
-def _check_direct_wipe(lang: str, code: str, cwd: Optional[Path] = None) -> Optional[str]:
-    """Block a direct wipe call with a root/home target in `code`.
+# ---------------------------------------------------------------------------
+# v1.20.0: variable wipe targets in direct wipe calls
+# ---------------------------------------------------------------------------
+# v1.11.0 only checked a LITERAL first argument to a direct wipe
+# call (shutil.rmtree, File::Path rmtree, FileUtils.rm_rf,
+# fs.rmSync), and left a variable target as a noted gap — so
+# `p = '/'; shutil.rmtree(p)` sailed through even though the value
+# is visible in the same code string, and so did the `path='/'
+# keyword form and a second wipe call after a benign first one
+# (the old code only ever examined the FIRST match). The fix
+# resolves the first argument the way v1.18.0 resolves sink
+# arguments: a literal string is checked as before; a bare / $name
+# variable resolves from a literal assignment in the same code
+# (or, for a $name form, from a shell assignment in the same
+# command); a variable assigned from a home expression
+# (os.path.expanduser('~'), $ENV{HOME}, Dir.home) counts as home.
+# A variable with no visible value is opaque and blocked, exactly
+# like a variable-only -c string since v1.11.0 and an opaque sink
+# argument since v1.18.0: the target it will delete is unknowable.
+# Expressions stay skipped (`shutil.rmtree(os.path.join(a, b))`):
+# only a bare variable as the whole first argument resolves.
+# Node still only blocks when `recursive` is in the call, so an
+# opaque non-recursive fs.rmSync stays allowed like a literal one.
+# What stays a noted gap: a wipe call reached through an import
+# alias (`from shutil import rmtree; rmtree('/')`), a dynamically
+# looked-up call (`getattr(shutil, 'rmtree')('/')`), and `path=`
+# as a later keyword argument
+# (`shutil.rmtree(ignore_errors=True, path='/')`).
+# This pass can only add blocks, never remove one.
 
-    Only literal root/home targets: a named subdirectory
-    (`shutil.rmtree('/tmp/build')`) stays allowed, same as the shell
-    named-target policy. A variable target is unknowable (noted gap).
+
+def _wipe_var_is_home(lang: str, code: str, name: str) -> bool:
+    """True if `name` is assigned from a home expression in `code`.
+
+    Same home expressions the literal checks accept, on the right
+    hand side of a plain assignment to this variable. Any such
+    assignment blocks: the denylist errs toward blocking, as
+    elsewhere.
     """
     if lang == "python":
-        m = re.search(r"shutil\.rmtree\s*\(\s*", code)
-        if m:
-            k = m.end()
-            if re.match(r"os\.path\.expanduser\s*\(\s*['\"]~", code[k:]):
-                return "recursive delete of home dir via shutil.rmtree"
-            if re.match(r"os\.environ\s*\[\s*['\"]HOME['\"]\s*\]", code[k:]):
-                return "recursive delete of home dir via shutil.rmtree"
-            if re.match(r"os\.getenv\s*\(\s*['\"]HOME['\"]", code[k:]):
-                return "recursive delete of home dir via shutil.rmtree"
-            if re.match(r"(?:pathlib\.)?Path\.home\s*\(\s*\)", code[k:]):
-                return "recursive delete of home dir via shutil.rmtree"
-            parsed = _parse_python_string(code, k)
-            if parsed is not None and _is_wipe_target_value(parsed[0]):
-                return "recursive delete of root via shutil.rmtree"
+        exprs = [
+            r"os\.path\.expanduser\s*\(\s*['\"]~",
+            r"os\.environ\s*\[\s*['\"]HOME['\"]\s*\]",
+            r"os\.getenv\s*\(\s*['\"]HOME['\"]",
+            r"(?:pathlib\.)?Path\.home\s*\(\s*\)",
+        ]
     elif lang == "perl":
-        m = re.search(r"(?:File::Path::)?(?:rmtree|remove_tree)\s*\(\s*", code)
-        if m:
-            k = m.end()
-            if re.match(r"\$ENV\{HOME\}", code[k:]):
-                return "recursive delete of home dir via rmtree"
-            parsed = _parse_c_string(code, k)
-            if parsed is not None and _is_wipe_target_value(parsed[0]):
-                return "recursive delete of root via rmtree"
+        exprs = [r"\$ENV\{HOME\}"]
     elif lang == "ruby":
-        m = re.search(r"FileUtils\.(?:rm_rf|rm_r|remove_entry_secure)\s*\(?\s*", code)
+        exprs = [r"Dir\.home\b"]
+    else:
+        return False
+    for expr in exprs:
+        if re.search(
+            r"(?<![.\w])" + re.escape(name) + r"\s*=(?!=)\s*" + expr, code
+        ):
+            return True
+    return False
+
+
+def _wipe_first_arg(
+    lang: str,
+    code: str,
+    k: int,
+    shell_assigns: dict[str, str],
+    code_assigns: dict[str, str],
+) -> tuple[str, Optional[str]]:
+    """(kind, value) for the first argument of a wipe call at `k`.
+
+    kind "value": a literal string, or a variable resolved to one.
+    kind "home": a home expression, or a variable assigned from
+    one in the same code. kind "opaque": a variable argument with
+    no visible value. kind "skip": anything else (an expression, a
+    call, ...). The variable must be the whole first argument: a
+    trailing `.`, `+`, `->` or `=` makes it an expression, not the
+    variable itself.
+    """
+    j = k
+    while j < len(code) and code[j] in " \t\r\n":
+        j += 1
+    if lang == "python":
+        m = re.match(r"path\s*=\s*", code[j:])
         if m:
-            k = m.end()
-            if re.match(r"Dir\.home\b", code[k:]):
-                return "recursive delete of home dir via FileUtils"
-            parsed = _parse_c_string(code, k)
-            if parsed is not None and _is_wipe_target_value(parsed[0]):
-                return "recursive delete of root via FileUtils"
+            j += m.end()
+    # Home-expression forms (same as the old literal checks).
+    if lang == "python":
+        if re.match(r"os\.path\.expanduser\s*\(\s*['\"]~", code[j:]):
+            return "home", None
+        if re.match(r"os\.environ\s*\[\s*['\"]HOME['\"]\s*\]", code[j:]):
+            return "home", None
+        if re.match(r"os\.getenv\s*\(\s*['\"]HOME['\"]", code[j:]):
+            return "home", None
+        if re.match(r"(?:pathlib\.)?Path\.home\s*\(\s*\)", code[j:]):
+            return "home", None
+    elif lang == "perl":
+        if re.match(r"\$ENV\{HOME\}", code[j:]):
+            return "home", None
+    elif lang == "ruby":
+        if re.match(r"Dir\.home\b", code[j:]):
+            return "home", None
+    parse_fn = _parse_python_string if lang == "python" else _parse_c_string
+    parsed = parse_fn(code, j)
+    if parsed is not None:
+        return "value", parsed[0]
+    if lang in ("perl", "php"):
+        m = re.match(r"\$[A-Za-z_][A-Za-z0-9_]*", code[j:])
+    else:
+        m = re.match(r"[A-Za-z_][A-Za-z0-9_]*", code[j:])
+    if not m:
+        return "skip", None
+    rest = code[j + m.end():].lstrip(" \t\r\n")
+    if rest and rest[0] not in ",);":
+        return "skip", None
+    name = m.group(0)
+    if _wipe_var_is_home(lang, code, name):
+        return "home", None
+    lookup = name[1:] if name.startswith("$") else name
+    if lookup in code_assigns:
+        return "value", code_assigns[lookup]
+    if name.startswith("$") and lookup in shell_assigns:
+        return "value", shell_assigns[lookup]
+    return "opaque", None
+
+
+def _check_direct_wipe(
+    lang: str,
+    code: str,
+    cwd: Optional[Path] = None,
+    shell_assigns: Optional[dict[str, str]] = None,
+    code_assigns: Optional[dict[str, str]] = None,
+) -> Optional[str]:
+    """Block a direct wipe call with a root/home target in `code`.
+
+    Every wipe call in the code is examined, not just the first:
+    a benign first call no longer hides a wipe in a later one.
+    Only root/home targets count: a named subdirectory
+    (`shutil.rmtree('/tmp/build')`, or a variable holding one)
+    stays allowed, same as the shell named-target policy.
+    """
+    shell_assigns = shell_assigns or {}
+    if code_assigns is None:
+        code_assigns = _assigned_code_literals(lang, code)
+    if lang == "python":
+        call_re = re.compile(r"shutil\.rmtree\s*\(\s*")
+        label_root = "recursive delete of root via shutil.rmtree"
+        label_home = "recursive delete of home dir via shutil.rmtree"
+        label_opaque = "opaque wipe target (variable value not visible) via shutil.rmtree"
+    elif lang == "perl":
+        # Paren-optional: perl lets `rmtree $dir` stand without
+        # parens, and that form hid a variable target outright.
+        call_re = re.compile(r"(?:File::Path::)?(?:rmtree|remove_tree)\s*\(?\s*")
+        label_root = "recursive delete of root via rmtree"
+        label_home = "recursive delete of home dir via rmtree"
+        label_opaque = "opaque wipe target (variable value not visible) via rmtree"
+    elif lang == "ruby":
+        call_re = re.compile(r"FileUtils\.(?:rm_rf|rm_r|remove_entry_secure)\s*\(?\s*")
+        label_root = "recursive delete of root via FileUtils"
+        label_home = "recursive delete of home dir via FileUtils"
+        label_opaque = "opaque wipe target (variable value not visible) via FileUtils"
     elif lang == "node":
-        m = re.search(r"fs\.rm(?:dir)?Sync\s*\(\s*", code)
-        if m:
-            k = m.end()
-            parsed = _parse_c_string(code, k)
-            if parsed is not None and _is_wipe_target_value(parsed[0]):
-                if "recursive" in code[m.start():m.start() + 300]:
-                    return "recursive delete of root via fs.rmSync"
+        # Also the inline form require('fs').rmSync(...), which
+        # never spells `fs.rmSync` as text.
+        call_re = re.compile(
+            r"(?:fs\.rm(?:dir)?Sync|require\(['\"]fs['\"]\)\.rm(?:dir)?Sync)\s*\(\s*"
+        )
+        label_root = "recursive delete of root via fs.rmSync"
+        label_home = "recursive delete of home dir via fs.rmSync"
+        label_opaque = "opaque wipe target (variable value not visible) via fs.rmSync"
+    else:
+        return None
+    for m in call_re.finditer(code):
+        if lang == "node" and "recursive" not in code[m.start():m.start() + 300]:
+            continue
+        kind, value = _wipe_first_arg(lang, code, m.end(), shell_assigns, code_assigns)
+        if kind == "home":
+            return label_home
+        if kind == "value" and value is not None and _is_wipe_target_value(value):
+            return label_root
+        if kind == "opaque":
+            return label_opaque
     return None
 
 
@@ -2237,7 +2369,7 @@ def _check_interpreter_code(
         label = _check_all(shell_cmd, cwd, depth + 1)
         if label:
             return label
-    return _check_direct_wipe(lang, code, cwd)
+    return _check_direct_wipe(lang, code, cwd, shell_assigns, code_assigns)
 
 
 def _check_interpreter_strings(
@@ -4293,7 +4425,11 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     heredoc / herestring feeding it, with -I template
     substitution), so a wipe target or power command arriving as
     data is caught, while a bare `echo ... | xargs` (which only
-    ever runs echo) stays allowed.
+    ever runs echo) stays allowed, then (v1.20.0) direct wipe calls
+    with a variable target (resolved from a literal assignment in
+    the code or the shell command, or blocked as opaque), the
+    `path=` keyword form, and every wipe call in the code, not
+    just the first.
     """
     if ALLOW_DANGEROUS:
         return None

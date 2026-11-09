@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.20.0 — 2026-11-09
+- Direct wipe calls with a variable target resolved (literal assignment in the code or in the same shell command, `$name` from shell values; a variable with no visible value is blocked as opaque); the `path=` keyword form and a second wipe call after a benign first one are caught too, and perl's paren-less `rmtree $dir` form is covered.
+
 ## 1.19.0 — 2026-11-08
 - Commands xargs composes from literal piped input are scanned with the full checks (echo / printf feeders simulated from their arguments, herestring / heredoc input, -I template substitution), so a wipe target or power command arriving as data is caught; a bare `echo ... | xargs` (which only ever runs echo) stays allowed.
 
