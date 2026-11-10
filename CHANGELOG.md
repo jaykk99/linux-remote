@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.21.0 — 2026-11-10
+- Direct wipe calls reached through an import alias are caught the same way as `shutil.rmtree` itself (`from shutil import rmtree` bare / `as` alias / multi-name / parenthesised / `*`, and `import shutil as <alias>`); the target resolves the same way (literal, `path=` keyword, variable from a literal assignment, home expression, or blocked as opaque).
+
 ## 1.20.0 — 2026-11-09
 - Direct wipe calls with a variable target resolved (literal assignment in the code or in the same shell command, `$name` from shell values; a variable with no visible value is blocked as opaque); the `path=` keyword form and a second wipe call after a benign first one are caught too, and perl's paren-less `rmtree $dir` form is covered.
 

@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.20.0"
+    assert r.json()["version"] == "1.21.0"
 
 
 # ---------------------------------------------------------------------------
@@ -2065,4 +2065,63 @@ def test_dangerous_blocked_v120(client, command):
     ],
 )
 def test_benign_still_allowed_v120(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# v1.21.0: wipe calls reached through an import alias
+# ---------------------------------------------------------------------------
+# `from shutil import rmtree; rmtree('/')` sailed through because the
+# check only ever matched the literal text `shutil.rmtree`. The
+# alias names are now read out of the same code string (`as`
+# alias, multi-name / parenthesised import, `*`, and
+# `import shutil as <alias>`) and checked exactly like a
+# `shutil.rmtree` call: literal, `path=` keyword, variable
+# resolved from a literal assignment, home expression, or blocked
+# as opaque when no value is visible.
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Bare alias, literal root / parent.
+        "python3 -c \"from shutil import rmtree; rmtree('/')\"",
+        "python3 -c \"from shutil import rmtree; rmtree('..')\"",
+        # `as` alias, multi-name import, star import.
+        "python3 -c \"from shutil import rmtree as rt; rt('/')\"",
+        "python3 -c \"from shutil import copy, rmtree; rmtree('/')\"",
+        "python3 -c \"from shutil import *; rmtree('/')\"",
+        # Module alias.
+        "python3 -c \"import shutil as sh; sh.rmtree('/')\"",
+        # Alias with a variable target, literal and opaque.
+        "python3 -c \"from shutil import rmtree; p = '/'; rmtree(p)\"",
+        "python3 -c \"from shutil import rmtree; rmtree(target)\"",
+        # Alias with a home target and the `path=` keyword form.
+        "python3 -c \"from shutil import rmtree; import os; p = os.path.expanduser('~'); rmtree(p)\"",
+        "python3 -c \"from shutil import rmtree; rmtree(path='/')\"",
+        # A benign first alias call no longer hides a wipe.
+        "python3 -c \"from shutil import rmtree; rmtree('/tmp/a'); rmtree('/')\"",
+        # Heredoc-fed code, plain and parenthesised import.
+        "python3 <<'PYEOF'\nfrom shutil import rmtree\nrmtree('/')\nPYEOF",
+        "python3 <<'PYEOF'\nfrom shutil import (\n rmtree,\n)\nrmtree('/')\nPYEOF",
+    ],
+)
+def test_dangerous_blocked_v121(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # A named target through an alias stays allowed.
+        "python3 -c \"from shutil import rmtree; rmtree('/tmp/build')\"",
+        "python3 -c \"from shutil import rmtree as rt; rt('/tmp/build')\"",
+        "python3 -c \"import shutil as sh; sh.rmtree('/tmp/build')\"",
+        "python3 -c \"from shutil import rmtree; p = '/tmp/build'; rmtree(p)\"",
+        "python3 -c \"from shutil import rmtree; rmtree(path='/tmp/build')\"",
+        # A bare `rmtree` with no shutil import is not ours to block.
+        "python3 -c \"def rmtree(x): pass; rmtree('/')\"",
+    ],
+)
+def test_benign_still_allowed_v121(client, command):
     assert server.check_dangerous(command) is None, command

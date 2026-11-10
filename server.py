@@ -48,7 +48,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.20.0"
+VERSION = "1.21.0"
 
 
 # ---------------------------------------------------------------------------
@@ -2174,11 +2174,18 @@ def _backtick_shell_strings(code: str, lang: str) -> list[str]:
 # only a bare variable as the whole first argument resolves.
 # Node still only blocks when `recursive` is in the call, so an
 # opaque non-recursive fs.rmSync stays allowed like a literal one.
-# What stays a noted gap: a wipe call reached through an import
-# alias (`from shutil import rmtree; rmtree('/')`), a dynamically
-# looked-up call (`getattr(shutil, 'rmtree')('/')`), and `path=`
-# as a later keyword argument
-# (`shutil.rmtree(ignore_errors=True, path='/')`).
+# v1.21.0: a wipe call reached through an import alias is caught
+# the same way — `from shutil import rmtree; rmtree('/')`, an `as`
+# alias, a multi-name / parenthesised import, `from shutil import
+# *`, and `import shutil as sh; sh.rmtree('/')`. The alias names
+# are read out of the same code string, and the first argument
+# resolves exactly like a `shutil.rmtree` call: literal, `path=`
+# keyword, variable resolved from a literal assignment, home
+# expression, or blocked as opaque when no value is visible.
+# What stays a noted gap: a dynamically looked-up call
+# (`getattr(shutil, 'rmtree')('/')`), `path=` as a later keyword
+# argument (`shutil.rmtree(ignore_errors=True, path='/')`), and
+# the node analogue of the alias (`const {rmSync} = require('fs')`).
 # This pass can only add blocks, never remove one.
 
 
@@ -2275,6 +2282,35 @@ def _wipe_first_arg(
     return "opaque", None
 
 
+def _python_rmtree_call_names(code: str) -> list[str]:
+    """Regex alternatives for `rmtree` calls reachable in `code`.
+
+    Always `shutil.rmtree`; plus any name the code binds to it:
+    `from shutil import rmtree` (bare, `as` alias, multi-name and
+    parenthesised imports included, `*` binds `rmtree` itself)
+    and `<alias>.rmtree` for `import shutil as <alias>`. A bare
+    name is guarded by a lookbehind so `shutil.rmtree` and
+    `myrmtree` never match it as a bare call.
+    """
+    names = [r"shutil\.rmtree"]
+    for m in re.finditer(r"from\s+shutil\s+import\s*(\([^)]*\)|[^\n;]+)", code):
+        chunk = m.group(1)
+        if chunk.startswith("("):
+            chunk = chunk[1:-1]
+        if chunk.strip() == "*":
+            names.append(r"(?<![\w.])rmtree")
+            continue
+        for part in chunk.split(","):
+            part = part.strip()
+            mm = re.match(r"rmtree(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?$", part)
+            if mm:
+                alias = mm.group(1) or "rmtree"
+                names.append(r"(?<![\w.])" + re.escape(alias))
+    for m in re.finditer(r"import\s+shutil\s+as\s+([A-Za-z_][A-Za-z0-9_]*)", code):
+        names.append(re.escape(m.group(1)) + r"\.rmtree")
+    return names
+
+
 def _check_direct_wipe(
     lang: str,
     code: str,
@@ -2294,7 +2330,12 @@ def _check_direct_wipe(
     if code_assigns is None:
         code_assigns = _assigned_code_literals(lang, code)
     if lang == "python":
-        call_re = re.compile(r"shutil\.rmtree\s*\(\s*")
+        # v1.21.0: also the names the code binds to shutil.rmtree
+        # with `from shutil import rmtree [as alias]` or
+        # `import shutil as <alias>`, checked the same way.
+        call_re = re.compile(
+            r"(?:%s)\s*\(\s*" % "|".join(_python_rmtree_call_names(code))
+        )
         label_root = "recursive delete of root via shutil.rmtree"
         label_home = "recursive delete of home dir via shutil.rmtree"
         label_opaque = "opaque wipe target (variable value not visible) via shutil.rmtree"
@@ -4429,7 +4470,11 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     with a variable target (resolved from a literal assignment in
     the code or the shell command, or blocked as opaque), the
     `path=` keyword form, and every wipe call in the code, not
-    just the first.
+    just the first, then (v1.21.0) a direct wipe call reached
+    through an import alias (`from shutil import rmtree` with an
+    `as` alias, multi-name / parenthesised import or `*`, and
+    `import shutil as <alias>`), checked the same way as
+    `shutil.rmtree` itself.
     """
     if ALLOW_DANGEROUS:
         return None
