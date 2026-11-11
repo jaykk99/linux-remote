@@ -48,7 +48,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.21.0"
+VERSION = "1.22.0"
 
 
 # ---------------------------------------------------------------------------
@@ -2174,18 +2174,25 @@ def _backtick_shell_strings(code: str, lang: str) -> list[str]:
 # only a bare variable as the whole first argument resolves.
 # Node still only blocks when `recursive` is in the call, so an
 # opaque non-recursive fs.rmSync stays allowed like a literal one.
-# v1.21.0: a wipe call reached through an import alias is caught
-# the same way — `from shutil import rmtree; rmtree('/')`, an `as`
-# alias, a multi-name / parenthesised import, `from shutil import
-# *`, and `import shutil as sh; sh.rmtree('/')`. The alias names
-# are read out of the same code string, and the first argument
-# resolves exactly like a `shutil.rmtree` call: literal, `path=`
-# keyword, variable resolved from a literal assignment, home
-# expression, or blocked as opaque when no value is visible.
-# What stays a noted gap: a dynamically looked-up call
-# (`getattr(shutil, 'rmtree')('/')`), `path=` as a later keyword
-# argument (`shutil.rmtree(ignore_errors=True, path='/')`), and
-# the node analogue of the alias (`const {rmSync} = require('fs')`).
+# v1.22.0: the three gaps above are closed — a wipe call reached
+# through `getattr(shutil, 'rmtree')` (literal attribute, or a bare
+# name whose literal assignment in the same code is 'rmtree', also
+# through an `import shutil as <alias>` module name), a `path=`
+# keyword after the first argument (`rmtree(ignore_errors=True,
+# path='/')`, top-level arguments only, so a `path=` inside a
+# nested call or a string is not misread as this call's keyword),
+# and the node analogue of the alias (`const {rmSync} =
+# require('fs')`, `as` / `:` alias, `rmdirSync`, `require('node:fs')`,
+# destructuring from an identifier bound to `require('fs')`, the
+# ESM `import {rmSync} from 'fs'`, and the bracket forms
+# `fs['rmSync']` / `require('fs')['rmSync']`). The first-argument
+# reader was split so the same literal / variable / home / opaque
+# resolution serves both the first argument and the later keyword.
+# What stays a noted gap: a dynamically looked-up call whose
+# attribute name has no visible value (`getattr(shutil, name)` with
+# no `name = 'rmtree'` in the code), `path=` passed inside a
+# `**{'path': ...}` kwargs dict, and the ruby analogue of the alias
+# (a bare `rm_rf` after `include FileUtils`).
 # This pass can only add blocks, never remove one.
 
 
@@ -2218,30 +2225,23 @@ def _wipe_var_is_home(lang: str, code: str, name: str) -> bool:
     return False
 
 
-def _wipe_first_arg(
+def _wipe_value_at(
     lang: str,
     code: str,
-    k: int,
+    j: int,
     shell_assigns: dict[str, str],
     code_assigns: dict[str, str],
 ) -> tuple[str, Optional[str]]:
-    """(kind, value) for the first argument of a wipe call at `k`.
+    """(kind, value) for a wipe target starting at index `j` in `code`.
 
     kind "value": a literal string, or a variable resolved to one.
     kind "home": a home expression, or a variable assigned from
     one in the same code. kind "opaque": a variable argument with
     no visible value. kind "skip": anything else (an expression, a
-    call, ...). The variable must be the whole first argument: a
-    trailing `.`, `+`, `->` or `=` makes it an expression, not the
-    variable itself.
+    call, ...). The variable must be the whole argument: a trailing
+    `.`, `+`, `->` or `=` makes it an expression, not the variable
+    itself.
     """
-    j = k
-    while j < len(code) and code[j] in " \t\r\n":
-        j += 1
-    if lang == "python":
-        m = re.match(r"path\s*=\s*", code[j:])
-        if m:
-            j += m.end()
     # Home-expression forms (same as the old literal checks).
     if lang == "python":
         if re.match(r"os\.path\.expanduser\s*\(\s*['\"]~", code[j:]):
@@ -2282,6 +2282,89 @@ def _wipe_first_arg(
     return "opaque", None
 
 
+def _wipe_first_arg(
+    lang: str,
+    code: str,
+    k: int,
+    shell_assigns: dict[str, str],
+    code_assigns: dict[str, str],
+) -> tuple[str, Optional[str]]:
+    """(kind, value) for the first argument of a wipe call at `k`.
+
+    Same kinds as _wipe_value_at. A leading `path=` keyword (python)
+    is skipped first, so `shutil.rmtree(path='/')` reads the same
+    way as `shutil.rmtree('/')`. A `path=` keyword after the first
+    argument is NOT read here: _wipe_later_path_kwarg handles it.
+    """
+    j = k
+    while j < len(code) and code[j] in " \t\r\n":
+        j += 1
+    if lang == "python":
+        m = re.match(r"path\s*=\s*", code[j:])
+        if m:
+            j += m.end()
+    return _wipe_value_at(lang, code, j, shell_assigns, code_assigns)
+
+
+def _wipe_later_path_kwarg(
+    lang: str,
+    code: str,
+    paren_idx: int,
+    shell_assigns: dict[str, str],
+    code_assigns: dict[str, str],
+) -> tuple[str, Optional[str]]:
+    """(kind, value) for a `path=` keyword after the first argument.
+
+    Only top-level arguments of the call are scanned, so a `path=`
+    inside a nested call, a dict literal or a string is not this
+    call's keyword (a `**{'path': ...}` kwargs dict stays a noted
+    gap). The first argument is not re-checked here: it was already
+    read by _wipe_first_arg. Returns ("skip", None) when no later
+    `path=` keyword carries a resolvable target; an expression
+    value (`path=os.path.join(...)`) is skipped and scanning
+    continues with the next argument.
+    """
+    close = _paren_close(code, paren_idx)
+    if close is None:
+        return "skip", None
+    parse_fn = _parse_python_string if lang == "python" else _parse_c_string
+    # Split the argument list at top-level commas.
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    arg_start = paren_idx + 1
+    i = paren_idx + 1
+    while i < close:
+        ch = code[i]
+        if ch in "'\"":
+            parsed = parse_fn(code, i)
+            i = parsed[1] if parsed is not None else i + 1
+            continue
+        if ch == "#":
+            nl = code.find("\n", i, close)
+            i = close if nl == -1 else nl + 1
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            spans.append((arg_start, i))
+            arg_start = i + 1
+        i += 1
+    spans.append((arg_start, close))
+    for start, end in spans[1:]:
+        m = re.match(r"\s*path\s*=\s*", code[start:end])
+        if not m:
+            continue
+        kind, value = _wipe_value_at(
+            lang, code, start + m.end(), shell_assigns, code_assigns
+        )
+        if kind != "skip":
+            return kind, value
+    return "skip", None
+
+
+
 def _python_rmtree_call_names(code: str) -> list[str]:
     """Regex alternatives for `rmtree` calls reachable in `code`.
 
@@ -2311,6 +2394,93 @@ def _python_rmtree_call_names(code: str) -> list[str]:
     return names
 
 
+def _python_shutil_module_names(code: str) -> list[str]:
+    """Names the `shutil` module goes by in `code`.
+
+    Always `shutil` itself, plus any alias bound by
+    `import shutil as <alias>`.
+    """
+    names = ["shutil"]
+    for m in re.finditer(r"import\s+shutil\s+as\s+([A-Za-z_][A-Za-z0-9_]*)", code):
+        names.append(m.group(1))
+    return names
+
+
+def _python_getattr_rmtree_sites(
+    code: str, code_assigns: dict[str, str]
+) -> list[tuple[int, int]]:
+    """(start, end) of `getattr(<shutil>, 'rmtree')(...)` call sites.
+
+    The attribute must be the literal 'rmtree', or a bare name whose
+    literal assignment in the same code is 'rmtree'. An attribute
+    name with no visible value stays a noted gap: the call it names
+    is unknowable, and blocking every `getattr(shutil, <unknown>)`
+    call would also block benign lookups written the same way, such
+    as `getattr(shutil, 'copy')`.
+    """
+    mod = "|".join(re.escape(n) for n in _python_shutil_module_names(code))
+    getattr_re = re.compile(
+        r"getattr\s*\(\s*(?:%s)\s*,\s*"
+        r"(?:(['\"])rmtree\1|([A-Za-z_][A-Za-z0-9_]*))\s*\)\s*\(\s*" % mod
+    )
+    sites: list[tuple[int, int]] = []
+    for m in getattr_re.finditer(code):
+        if m.group(2) is not None and code_assigns.get(m.group(2)) != "rmtree":
+            continue
+        sites.append((m.start(), m.end()))
+    return sites
+
+
+def _node_rm_call_names(code: str) -> list[str]:
+    """Regex alternatives for `rmSync` / `rmdirSync` calls in `code`.
+
+    Always `fs.rmSync` / `fs.rmdirSync`, the bracket forms
+    `fs['rmSync']` / `fs["rmdirSync"]`, and the inline
+    `require('fs').rmSync(...)` form (also `require('node:fs')`,
+    also bracketed). Plus any bare name the code binds to one of
+    them by destructuring: `const {rmSync} = require('fs')`,
+    `const {rmSync: delTree} = require('fs')`,
+    `const {rmSync} = fs` where `fs` itself came from
+    `require('fs')`, and the ESM `import {rmSync} from 'fs'`.
+    A bare name is guarded by a lookbehind so `fs.rmSync` and
+    `myrmSync` never match it as a bare call. Destructuring from
+    `require('fs').promises` does NOT bind: promises has no rmSync.
+    """
+    names = [
+        r"fs\.rm(?:dir)?Sync",
+        r"fs\[['\"]rm(?:dir)?Sync['\"]\]",
+        r"require\(['\"](?:node:)?fs['\"]\)\.rm(?:dir)?Sync",
+        r"require\(['\"](?:node:)?fs['\"]\)\[['\"]rm(?:dir)?Sync['\"]\]",
+    ]
+    fs_ids = ["fs"]
+    for m in re.finditer(
+        r"(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+        r"require\s*\(\s*['\"](?:node:)?fs['\"]\s*\)",
+        code,
+    ):
+        fs_ids.append(m.group(1))
+    src = r"(?:require\s*\(\s*['\"](?:node:)?fs['\"]\s*\)|%s)" % "|".join(
+        re.escape(i) for i in dict.fromkeys(fs_ids)
+    )
+    for m in re.finditer(
+        r"(?:const|let|var)\s*\{([^}]*)\}\s*=\s*" + src + r"(?!\s*\.)", code
+    ):
+        for part in m.group(1).split(","):
+            part = part.strip()
+            mm = re.match(r"(rm(?:dir)?Sync)(?:\s*:\s*([A-Za-z_][A-Za-z0-9_]*))?$", part)
+            if mm:
+                names.append(r"(?<![\w.])" + re.escape(mm.group(2) or mm.group(1)))
+    for m in re.finditer(
+        r"import\s*\{([^}]*)\}\s*from\s*['\"](?:node:)?fs['\"]", code
+    ):
+        for part in m.group(1).split(","):
+            part = part.strip()
+            mm = re.match(r"(rm(?:dir)?Sync)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?$", part)
+            if mm:
+                names.append(r"(?<![\w.])" + re.escape(mm.group(2) or mm.group(1)))
+    return names
+
+
 def _check_direct_wipe(
     lang: str,
     code: str,
@@ -2333,9 +2503,13 @@ def _check_direct_wipe(
         # v1.21.0: also the names the code binds to shutil.rmtree
         # with `from shutil import rmtree [as alias]` or
         # `import shutil as <alias>`, checked the same way.
+        # v1.22.0: also `getattr(shutil, 'rmtree')(...)`, and a
+        # `path=` keyword after the first argument.
         call_re = re.compile(
             r"(?:%s)\s*\(\s*" % "|".join(_python_rmtree_call_names(code))
         )
+        call_sites = [(m.start(), m.end()) for m in call_re.finditer(code)]
+        call_sites += _python_getattr_rmtree_sites(code, code_assigns)
         label_root = "recursive delete of root via shutil.rmtree"
         label_home = "recursive delete of home dir via shutil.rmtree"
         label_opaque = "opaque wipe target (variable value not visible) via shutil.rmtree"
@@ -2343,35 +2517,56 @@ def _check_direct_wipe(
         # Paren-optional: perl lets `rmtree $dir` stand without
         # parens, and that form hid a variable target outright.
         call_re = re.compile(r"(?:File::Path::)?(?:rmtree|remove_tree)\s*\(?\s*")
+        call_sites = [(m.start(), m.end()) for m in call_re.finditer(code)]
         label_root = "recursive delete of root via rmtree"
         label_home = "recursive delete of home dir via rmtree"
         label_opaque = "opaque wipe target (variable value not visible) via rmtree"
     elif lang == "ruby":
         call_re = re.compile(r"FileUtils\.(?:rm_rf|rm_r|remove_entry_secure)\s*\(?\s*")
+        call_sites = [(m.start(), m.end()) for m in call_re.finditer(code)]
         label_root = "recursive delete of root via FileUtils"
         label_home = "recursive delete of home dir via FileUtils"
         label_opaque = "opaque wipe target (variable value not visible) via FileUtils"
     elif lang == "node":
         # Also the inline form require('fs').rmSync(...), which
-        # never spells `fs.rmSync` as text.
+        # never spells `fs.rmSync` as text, and (v1.22.0) any bare
+        # name the code binds to rmSync / rmdirSync by destructuring
+        # or ESM import.
         call_re = re.compile(
-            r"(?:fs\.rm(?:dir)?Sync|require\(['\"]fs['\"]\)\.rm(?:dir)?Sync)\s*\(\s*"
+            r"(?:%s)\s*\(\s*" % "|".join(_node_rm_call_names(code))
         )
+        call_sites = [(m.start(), m.end()) for m in call_re.finditer(code)]
         label_root = "recursive delete of root via fs.rmSync"
         label_home = "recursive delete of home dir via fs.rmSync"
         label_opaque = "opaque wipe target (variable value not visible) via fs.rmSync"
     else:
         return None
-    for m in call_re.finditer(code):
-        if lang == "node" and "recursive" not in code[m.start():m.start() + 300]:
+    for start, end in call_sites:
+        if lang == "node" and "recursive" not in code[start:start + 300]:
             continue
-        kind, value = _wipe_first_arg(lang, code, m.end(), shell_assigns, code_assigns)
+        kind, value = _wipe_first_arg(lang, code, end, shell_assigns, code_assigns)
         if kind == "home":
             return label_home
         if kind == "value" and value is not None and _is_wipe_target_value(value):
             return label_root
         if kind == "opaque":
             return label_opaque
+        if lang == "python":
+            # A `path=` keyword after the first argument: the old
+            # code only ever read the first argument, so
+            # `rmtree(ignore_errors=True, path='/')` sailed through.
+            paren_idx = end - 1
+            while paren_idx > start and code[paren_idx] in " \t\r\n":
+                paren_idx -= 1
+            kind, value = _wipe_later_path_kwarg(
+                lang, code, paren_idx, shell_assigns, code_assigns
+            )
+            if kind == "home":
+                return label_home
+            if kind == "value" and value is not None and _is_wipe_target_value(value):
+                return label_root
+            if kind == "opaque":
+                return label_opaque
     return None
 
 

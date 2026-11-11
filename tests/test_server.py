@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.21.0"
+    assert r.json()["version"] == "1.22.0"
 
 
 # ---------------------------------------------------------------------------
@@ -2124,4 +2124,88 @@ def test_dangerous_blocked_v121(client, command):
     ],
 )
 def test_benign_still_allowed_v121(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+# v1.22.0: dynamic lookup, later `path=` keyword, node destructuring
+# ---------------------------------------------------------------------------
+# The three gaps v1.20/v1.21 left noted are closed together: a wipe
+# reached through `getattr(shutil, 'rmtree')`, a `path=` keyword
+# after the first argument, and a node wipe reached through a
+# destructured / ESM-imported name instead of `fs.rmSync`.
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Dynamic lookup: literal attribute, root / parent.
+        "python3 -c \"import shutil; getattr(shutil, 'rmtree')('/')\"",
+        "python3 -c \"import shutil; getattr(shutil, 'rmtree')('..')\"",
+        # Dynamic lookup through a module alias, and a bare attribute
+        # name resolved from a literal assignment in the same code.
+        "python3 -c \"import shutil as sh; getattr(sh, 'rmtree')('/')\"",
+        "python3 -c \"import shutil; name = 'rmtree'; getattr(shutil, name)('/')\"",
+        # Dynamic lookup with a variable target, literal and opaque,
+        # and with the `path=` keyword form.
+        "python3 -c \"import shutil; p = '/'; getattr(shutil, 'rmtree')(p)\"",
+        "python3 -c \"import shutil; getattr(shutil, 'rmtree')(target)\"",
+        "python3 -c \"import shutil; getattr(shutil, 'rmtree')(ignore_errors=True, path='/')\"",
+        # Heredoc-fed dynamic lookup.
+        "python3 <<'PYEOF'\nimport shutil\ngetattr(shutil, 'rmtree')('/')\nPYEOF",
+        # `path=` as a later keyword: literal root / parent, variable
+        # root, opaque variable, and alongside a positional argument.
+        "python3 -c \"import shutil; shutil.rmtree(ignore_errors=True, path='/')\"",
+        "python3 -c \"import shutil; shutil.rmtree(ignore_errors=True, path='..')\"",
+        "python3 -c \"import shutil; p = '/'; shutil.rmtree(ignore_errors=True, path=p)\"",
+        "python3 -c \"import shutil; shutil.rmtree(ignore_errors=True, path=target)\"",
+        "python3 -c \"import shutil; shutil.rmtree('/tmp/a', ignore_errors=True, path='/')\"",
+        # A later `path=` keyword through an import alias.
+        "python3 -c \"from shutil import rmtree; rmtree(ignore_errors=True, path='/')\"",
+        # Node destructured rmSync / rmdirSync, root target.
+        "node -e \"const {rmSync} = require('fs'); rmSync('/', {recursive: true})\"",
+        "node -e \"const {rmSync: delTree} = require('fs'); delTree('/', {recursive: true})\"",
+        "node -e \"const {rmdirSync} = require('fs'); rmdirSync('/', {recursive: true})\"",
+        "node -e \"const {rmSync} = require('node:fs'); rmSync('/', {recursive: true})\"",
+        # Destructured from an identifier bound to require('fs').
+        "node -e \"const fs = require('fs'); const {rmSync} = fs; rmSync('/', {recursive: true})\"",
+        # ESM import, and the bracket forms.
+        "node -e \"import {rmSync} from 'fs'; rmSync('/', {recursive: true})\"",
+        "node -e \"const fs = require('fs'); fs['rmSync']('/', {recursive: true})\"",
+        "node -e \"require('fs')['rmSync']('/', {recursive: true})\"",
+        # Destructured rmSync with a variable / opaque target.
+        "node -e \"const {rmSync} = require('fs'); const p = '/'; rmSync(p, {recursive: true})\"",
+        "node -e \"const {rmSync} = require('fs'); rmSync(d, {recursive: true})\"",
+    ],
+)
+def test_dangerous_blocked_v122(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # A named target through the dynamic lookup stays allowed,
+        # and so does a lookup of a non-wipe name or a bare name
+        # assigned something else.
+        "python3 -c \"import shutil; getattr(shutil, 'rmtree')('/tmp/build')\"",
+        "python3 -c \"import shutil; getattr(shutil, 'copy')('/')\"",
+        "python3 -c \"import shutil; name = 'copy'; getattr(shutil, name)('/')\"",
+        # A named target via a later `path=` keyword stays allowed.
+        "python3 -c \"import shutil; shutil.rmtree(ignore_errors=True, path='/tmp/build')\"",
+        "python3 -c \"import shutil; p = '/tmp/build'; shutil.rmtree(ignore_errors=True, path=p)\"",
+        # A `path=` inside a nested call is not this call's keyword.
+        "python3 -c \"import shutil, os; shutil.rmtree(os.path.join('/tmp', 'build'), ignore_errors=True)\"",
+        # A named target through a destructured name stays allowed,
+        # and so does a non-recursive destructured call.
+        "node -e \"const {rmSync} = require('fs'); rmSync('/tmp/build', {recursive: true})\"",
+        "node -e \"const {rmSync} = require('fs'); rmSync('/', {})\"",
+        # Destructuring from promises binds nothing wipeable, and a
+        # destructured name from another module is not ours to block.
+        "node -e \"const {rmSync} = require('fs').promises; rmSync('/', {recursive: true})\"",
+        "node -e \"const {rmSync} = require('other'); rmSync('/', {recursive: true})\"",
+        "node -e \"const {readFileSync} = require('fs'); readFileSync('/')\"",
+    ],
+)
+def test_benign_still_allowed_v122(client, command):
     assert server.check_dangerous(command) is None, command

@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.22.0 — 2026-11-11
+- The three remaining direct-wipe gaps are closed: `getattr(shutil, 'rmtree')(...)` dynamic lookups (literal attribute, or a bare name assigned `'rmtree'` in the same code, also via an `import shutil as` module alias), `path=` as a later keyword argument (`rmtree(ignore_errors=True, path='/')`, top-level arguments only), and node destructured wipe calls (`const {rmSync} = require('fs')` / `as` alias / `rmdirSync` / `require('node:fs')` / destructuring from an identifier bound to `require('fs')` / ESM `import {rmSync} from 'fs'` / `fs['rmSync']` bracket forms); targets resolve the same way (literal, variable from a literal assignment, home expression, or blocked as opaque).
+
 ## 1.21.0 — 2026-11-10
 - Direct wipe calls reached through an import alias are caught the same way as `shutil.rmtree` itself (`from shutil import rmtree` bare / `as` alias / multi-name / parenthesised / `*`, and `import shutil as <alias>`); the target resolves the same way (literal, `path=` keyword, variable from a literal assignment, home expression, or blocked as opaque).
 
