@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.23.0 — 2026-11-12
+- Heredoc input to xargs attributed by operator position (bodies follow their operators in source order; the last redirect wins on a stage), so a power command or wipe target fed to xargs from a heredoc is caught however many heredocs the command has; a dangerous body belonging to another stage's heredoc stays allowed, and a `-d` value that does not decode to exactly one char is verified refused by xargs itself, not a bypass.
+
 ## 1.22.0 — 2026-11-11
 - The three remaining direct-wipe gaps are closed: `getattr(shutil, 'rmtree')(...)` dynamic lookups (literal attribute, or a bare name assigned `'rmtree'` in the same code, also via an `import shutil as` module alias), `path=` as a later keyword argument (`rmtree(ignore_errors=True, path='/')`, top-level arguments only), and node destructured wipe calls (`const {rmSync} = require('fs')` / `as` alias / `rmdirSync` / `require('node:fs')` / destructuring from an identifier bound to `require('fs')` / ESM `import {rmSync} from 'fs'` / `fs['rmSync']` bracket forms); targets resolve the same way (literal, variable from a literal assignment, home expression, or blocked as opaque).
 

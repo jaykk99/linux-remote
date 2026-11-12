@@ -48,7 +48,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.22.0"
+VERSION = "1.23.0"
 
 
 # ---------------------------------------------------------------------------
@@ -2635,15 +2635,105 @@ def _check_interpreter_strings(
 
 # --- heredocs / herestrings ----------------------------------------------------
 
-def _extract_heredocs(command: str) -> list[tuple[str, str]]:
-    """(kind, body) for every heredoc / herestring in `command`.
+def _line_redirect_ops(
+    command: str, start: int
+) -> tuple[list[tuple[str, str, bool, int]], int]:
+    """Heredoc / herestring operators on the line at `start`.
+
+    Returns (ops, line_end): ops is [(kind, delim-or-word,
+    strip_tabs, op_pos)] in source order for every `<<[-]DELIM`
+    and `<<< word` on that line, quote-aware (a `<<` inside
+    quotes is text, not a redirect); line_end is the index of
+    the newline ending the line, or len(command). Several
+    operators can share one line (`cmd <<A <<B`); their bodies
+    follow the line in operator order, so the caller collects
+    them all before reading any body.
+    """
+    ops: list[tuple[str, str, bool, int]] = []
+    n = len(command)
+    line_end = command.find("\n", start)
+    if line_end == -1:
+        line_end = n
+    j = start
+    while j < line_end:
+        ch = command[j]
+        if ch == "\\":
+            j += 2
+            continue
+        if ch == "'":
+            j = _skip_squote(command, j)
+            continue
+        if ch == '"':
+            k = j + 1
+            while k < n:
+                if command[k] == "\\" and k + 1 < n:
+                    k += 2
+                    continue
+                if command[k] == '"':
+                    k += 1
+                    break
+                k += 1
+            j = k
+            continue
+        if ch == "$" and j + 1 < n and command[j + 1] == "'":
+            j = _skip_ansi_c(command, j)
+            continue
+        if ch == "`":
+            close = _backtick_close(command, j)
+            j = n if close is None else close + 1
+            continue
+        if ch == "<" and j + 1 < line_end and command[j + 1] == "<":
+            if j + 2 < line_end and command[j + 2] == "<":
+                k = j + 3
+                while k < line_end and command[k] in " \t":
+                    k += 1
+                if k < line_end:
+                    end = _word_end(command, k)
+                    toks = _tokens(command[k:end])
+                    if toks:
+                        ops.append(("herestring", toks[0], False, j))
+                    j = end
+                else:
+                    j = line_end
+                continue
+            op = j
+            k = j + 2
+            strip_tabs = False
+            if k < line_end and command[k] == "-":
+                strip_tabs = True
+                k += 1
+            while k < line_end and command[k] in " \t":
+                k += 1
+            if k >= line_end:
+                j = line_end
+                continue
+            end = _word_end(command, k)
+            toks = _tokens(command[k:end])
+            if not toks or not toks[0]:
+                j = end
+                continue
+            ops.append(("heredoc", toks[0], strip_tabs, op))
+            j = end
+            continue
+        j += 1
+    return ops, line_end
+
+
+def _extract_heredocs(command: str) -> list[tuple[str, str, int]]:
+    """(kind, body, operator offset) for every heredoc / herestring
+    in `command`.
 
     Quote-aware: a `<<` inside quotes is text, not a redirect. For
     `<<[-]DELIM` the body is the lines up to the line that is exactly
     DELIM (leading tabs stripped for `<<-`); for `<<< word` the body
     is the decoded word. An unterminated heredoc takes the rest.
+    Several operators can share one line (`cmd <<A <<B`); their
+    bodies follow the line in operator order. The offset is where
+    the `<<` / `<<<` operator starts: bodies follow their operators
+    in source order, so the offset is what attributes a body to the
+    stage that redirected it (v1.23.0).
     """
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, int]] = []
     n = len(command)
     i = 0
     while i < n:
@@ -2678,48 +2768,44 @@ def _extract_heredocs(command: str) -> list[tuple[str, str]]:
                     end = _word_end(command, j)
                     toks = _tokens(command[j:end])
                     if toks:
-                        out.append(("herestring", toks[0]))
+                        out.append(("herestring", toks[0], i))
                     i = end
                 else:
                     i = n
                 continue
-            j = i + 2
-            strip_tabs = False
-            if j < n and command[j] == "-":
-                strip_tabs = True
-                j += 1
-            while j < n and command[j] in " \t":
-                j += 1
-            if j >= n:
-                i = n
+            # Heredoc: several operators can share one line
+            # (`cmd <<A <<B`, `cmd <<A <<<x`); their bodies
+            # follow the line in operator order, so collect
+            # them all before reading any body.
+            ops, line_end = _line_redirect_ops(command, i)
+            if not any(kind == "heredoc" for kind, _w, _s, _p in ops):
+                for kind, word, _s, pos in ops:
+                    if kind == "herestring":
+                        out.append(("herestring", word, pos))
+                i = line_end
                 continue
-            end = _word_end(command, j)
-            toks = _tokens(command[j:end])
-            if not toks or not toks[0]:
-                i = end
-                continue
-            delim = toks[0]
-            nl = command.find("\n", end)
-            if nl == -1:
-                out.append(("heredoc", ""))
-                i = n
-                continue
-            body_lines: list[str] = []
-            pos = nl + 1
+            pos = line_end + 1 if line_end < n else n
             after = n
-            while True:
-                eol = command.find("\n", pos)
-                line = command[pos:] if eol == -1 else command[pos:eol]
-                cmp_line = line.lstrip("\t") if strip_tabs else line
-                if cmp_line.rstrip("\r") == delim:
-                    after = n if eol == -1 else eol + 1
-                    break
-                body_lines.append(line)
-                if eol == -1:
-                    after = n
-                    break
-                pos = eol + 1
-            out.append(("heredoc", "\n".join(body_lines)))
+            for kind, word, strip_tabs, op in ops:
+                if kind == "herestring":
+                    out.append(("herestring", word, op))
+                    continue
+                body_lines: list[str] = []
+                after = n
+                while True:
+                    eol = command.find("\n", pos)
+                    line = command[pos:] if eol == -1 else command[pos:eol]
+                    cmp_line = line.lstrip("\t") if strip_tabs else line
+                    if cmp_line.rstrip("\r") == word:
+                        after = n if eol == -1 else eol + 1
+                        break
+                    body_lines.append(line)
+                    if eol == -1:
+                        after = n
+                        break
+                    pos = eol + 1
+                out.append(("heredoc", "\n".join(body_lines), op))
+                pos = after
             i = after
             continue
         i += 1
@@ -2837,7 +2923,7 @@ def _check_heredocs(
     if not kinds:
         return None
     shell_assigns = _assigned_literals(command)
-    for _kind, body in bodies:
+    for _kind, body, _pos in bodies:
         if not body.strip():
             continue
         # <<- strips leading tabs before the interpreter sees the
@@ -3913,10 +3999,23 @@ def _check_command_position_power(command: str) -> Optional[str]:
 # What stays a noted gap, not a claimed block: input that is not
 # visible in the command — find / ls output, a file (`cat file |
 # xargs ...`, `xargs -a file ...`), a variable with no visible
-# assignment, a heredoc when the command has more than one (its
-# body cannot be attributed to one stage), and -d with a value
-# that does not decode to exactly one char. This pass can only
-# add blocks, never remove one.
+# assignment, and -d with a value that does not decode to exactly
+# one char (verified against the local xargs: it refuses such a
+# value with exit 1 and runs nothing, so skipping the invocation
+# is safe, not a bypass). This pass can only add blocks, never
+# remove one.
+#
+# v1.23.0: a heredoc feeding xargs is attributed by operator
+# position now, not by counting heredocs in the command: with
+# more than one heredoc v1.19.0 could not tell which body was a
+# stage's stdin and skipped the invocation, so `xargs -I{}
+# sh -c '{}' <<B` with a `shutdown` body sailed through whenever
+# another heredoc appeared anywhere in the command. Bodies
+# follow their operators in source order, so the operator's
+# offset in the whole command picks the body, and redirects
+# apply left to right with the last one winning (`cat <<A <<B`
+# reads B, `cat <<<x <<B` reads B's body). A stage whose offset
+# cannot be located is skipped, never misattributed.
 
 
 def _split_pipes(piece: str) -> list[str]:
@@ -4349,26 +4448,42 @@ def _parse_xargs_args(words: list[str]) -> dict:
     return parsed
 
 
-def _stage_stdin_text(stage: str, heredoc_bodies: list[str]) -> Optional[str]:
+def _stage_stdin_text(
+    stage: str,
+    stage_offset: Optional[int],
+    heredocs: list[tuple[str, str, int]],
+) -> Optional[str]:
     """Input text arriving on `stage`'s stdin via <<< or <<, or None.
 
-    A herestring's word is inline; a heredoc's body is only
-    usable when the whole command has exactly one heredoc
-    (otherwise the body cannot be attributed to this stage). A
-    stage with both is ambiguous and yields None.
+    Attribution is by operator position: `heredocs` holds every
+    heredoc / herestring in the whole command with the offset of
+    its operator, and a stage's stdin comes from the operators
+    inside its own span [stage_offset, stage_offset + len(stage)).
+    Bodies follow their operators in source order, so this holds
+    with any number of heredocs in the command (v1.23.0: v1.19.0
+    could only use the body when the command had exactly one).
+    Redirects apply left to right and the last one wins, so a
+    stage with several stdin redirects reads the last one's body
+    — `cat <<A <<B` reads B, `cat <<<x <<B` reads B's body and
+    `cat <<B <<<x` reads x (verified against the local shell).
+    A herestring's word gets a trailing newline, the way xargs
+    sees it as a line of input. An unlocatable stage (offset
+    None) yields None, the same as an unknowable input.
     """
-    docs = _extract_heredocs(stage)
-    kinds = {kind for kind, _ in docs}
-    if "herestring" in kinds and "heredoc" in kinds:
+    if stage_offset is None:
         return None
-    for kind, body in docs:
-        if kind == "herestring":
-            return body + "\n"
-    if "heredoc" in kinds:
-        if len(heredoc_bodies) == 1:
-            return heredoc_bodies[0]
+    start = stage_offset
+    end = stage_offset + len(stage)
+    docs = [
+        (kind, body)
+        for kind, body, pos in heredocs
+        if start <= pos < end
+    ]
+    if not docs:
         return None
-    return None
+    # Last redirect wins; its body is the stage's stdin.
+    kind, body = docs[-1]
+    return body + "\n" if kind == "herestring" else body
 
 
 def _has_stdout_redirect(args: list[str]) -> bool:
@@ -4385,7 +4500,10 @@ def _has_stdout_redirect(args: list[str]) -> bool:
 
 
 def _feeder_input_text(
-    stage: str, heredoc_bodies: list[str], shell_assigns: dict[str, str]
+    stage: str,
+    stage_offset: Optional[int],
+    heredocs: list[tuple[str, str, int]],
+    shell_assigns: dict[str, str],
 ) -> Optional[str]:
     """Stdout text of the stage feeding xargs, or None if unknowable.
 
@@ -4415,7 +4533,7 @@ def _feeder_input_text(
         rest = _filter_redirect_words(args)
         if any(not a.startswith("-") for a in rest):
             return None  # reads a file: content not visible
-        return _stage_stdin_text(stage, heredoc_bodies)
+        return _stage_stdin_text(stage, stage_offset, heredocs)
     return None
 
 
@@ -4503,9 +4621,37 @@ def _check_xargs(
     if depth >= _NESTED_MAX_DEPTH:
         return None
     shell_assigns = _assigned_literals(command)
-    heredoc_bodies = [b for k, b in _extract_heredocs(command) if k == "heredoc"]
+    # Every heredoc / herestring in the command, with its operator
+    # offset: that is what attributes a body to the stage that
+    # redirected it, however many heredocs the command has.
+    heredocs = _extract_heredocs(command)
+    cursor = 0
     for piece in _split_top_level(command, split_pipes=False):
+        # Pieces and stages are verbatim slices of `command`, in
+        # order, so their offsets are found with an advancing
+        # search; a stage whose offset cannot be located gets
+        # None and its stdin is unknowable, never misattributed.
+        piece_start = command.find(piece, cursor)
+        if piece_start == -1:
+            piece_start = None
+        else:
+            cursor = piece_start + len(piece)
         stages = _split_pipes(piece)
+        stage_cursor = 0
+        stage_offsets: list[Optional[int]] = []
+        for stage in stages:
+            rel = piece.find(stage, stage_cursor)
+            if rel == -1:
+                stage_offsets.append(None)
+                continue
+            stage_cursor = rel + len(stage)
+            if piece_start is None:
+                stage_offsets.append(None)
+                continue
+            off = piece_start + rel
+            stage_offsets.append(
+                off if command[off:off + len(stage)] == stage else None
+            )
         for k, stage in enumerate(stages):
             words = _segment_words(stage)
             if not words:
@@ -4521,10 +4667,11 @@ def _check_xargs(
                 continue  # input from a file: noted gap
             if parsed["command"] is None:
                 continue  # default command is echo: safe
-            text = _stage_stdin_text(stage, heredoc_bodies)
+            text = _stage_stdin_text(stage, stage_offsets[k], heredocs)
             if text is None and k > 0:
                 text = _feeder_input_text(
-                    stages[k - 1], heredoc_bodies, shell_assigns
+                    stages[k - 1], stage_offsets[k - 1], heredocs,
+                    shell_assigns,
                 )
             if text is None:
                 continue  # input not visible: noted gap
@@ -4669,7 +4816,10 @@ def check_dangerous(command: str, cwd: Optional[Path] = None) -> Optional[str]:
     through an import alias (`from shutil import rmtree` with an
     `as` alias, multi-name / parenthesised import or `*`, and
     `import shutil as <alias>`), checked the same way as
-    `shutil.rmtree` itself.
+    `shutil.rmtree` itself, then (v1.23.0) heredoc input to xargs
+    attributed by operator position, so a stage's stdin is its own
+    heredoc's body however many heredocs the command has (last
+    redirect wins on a stage), closing the multi-heredoc bypass.
     """
     if ALLOW_DANGEROUS:
         return None

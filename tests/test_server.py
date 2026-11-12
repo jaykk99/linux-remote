@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.22.0"
+    assert r.json()["version"] == "1.23.0"
 
 
 # ---------------------------------------------------------------------------
@@ -2133,6 +2133,22 @@ def test_benign_still_allowed_v121(client, command):
 # reached through `getattr(shutil, 'rmtree')`, a `path=` keyword
 # after the first argument, and a node wipe reached through a
 # destructured / ESM-imported name instead of `fs.rmSync`.
+# ---------------------------------------------------------------------------
+# v1.23.0: heredoc input to xargs with more than one heredoc
+# ---------------------------------------------------------------------------
+# v1.19.0 could only use a heredoc body as xargs input when the
+# command had exactly one heredoc, so a power command fed to
+# xargs from a heredoc sailed through whenever another heredoc
+# appeared anywhere in the command (`xargs -I{} sh -c '{}'
+# <<B` with a `shutdown` body, plus an unrelated heredoc for
+# `cat | head`). Bodies are now attributed by operator position
+# (they follow their operators in source order), and redirects
+# apply left to right with the last one winning, so a stage
+# reads its own heredoc's body however many heredocs there are —
+# including two operators on one stage (`<<A <<B` reads B) and a
+# herestring / heredoc pair in either order. A dangerous body
+# belonging to another stage's heredoc is data, not code, and
+# stays allowed: the attribution must not mix the bodies up.
 
 @pytest.mark.parametrize(
     "command",
@@ -2185,6 +2201,32 @@ def test_dangerous_blocked_v122(client, command):
 @pytest.mark.parametrize(
     "command",
     [
+        # The repro: a second heredoc elsewhere hid the body.
+        "cat <<A | head -1\nhello\nA\nxargs -I{} sh -c '{}' <<B\nshutdown\nB",
+        "bash <<B\necho hi\nB\nxargs -I{} sh -c '{}' <<A\nreboot\nA",
+        # The feeder's body, with a second heredoc elsewhere.
+        "bash <<B\necho hi\nB\ncat <<A | xargs -I{} sh -c '{}'\nshutdown\nA",
+        # Three heredocs; the dangerous body is the third.
+        "cat <<A | head -1\nhello\nA\nbash <<C\necho hi\nC\nxargs -I{} sh -c '{}' <<B\npoweroff\nB",
+        # A wipe target through -I, two heredocs.
+        "cat <<A | head -1\nhello\nA\nxargs -I{} rm -rf {} <<B\n/\nB",
+        # Two operators on one stage: the last one wins.
+        "xargs -I{} sh -c '{}' <<A <<B\necho hi\nA\nshutdown\nB",
+        # Herestring then heredoc: the heredoc is last, so it wins.
+        "xargs -I{} sh -c '{}' <<< 'echo hi' <<B\nshutdown\nB",
+        # <<- with a tab-indented delimiter line, second heredoc.
+        "cat <<A | head -1\nhello\nA\nxargs -I{} sh -c '{}' <<-B\nshutdown\n\tB",
+    ],
+)
+def test_dangerous_blocked_v123(client, command):
+    assert server.check_dangerous(command) is not None, command
+    r = client.post("/exec", json={"command": command}, headers=auth())
+    assert r.status_code == 403, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         # A named target through the dynamic lookup stays allowed,
         # and so does a lookup of a non-wipe name or a bare name
         # assigned something else.
@@ -2208,4 +2250,26 @@ def test_dangerous_blocked_v122(client, command):
     ],
 )
 def test_benign_still_allowed_v122(client, command):
+    assert server.check_dangerous(command) is None, command
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # The dangerous body belongs to the other heredoc: it is
+        # piped to head, never executed, so it stays allowed.
+        "cat <<A | head -1\nshutdown\nA\nxargs -I{} sh -c '{}' <<B\necho hi\nB",
+        # Two operators on one stage, first body dangerous: the
+        # stage reads the last one's body, so `shutdown` is read
+        # and discarded, never xargs input.
+        "xargs -I{} sh -c '{}' <<A <<B\nshutdown\nA\necho hi\nB",
+        # Heredoc then herestring: the herestring is last, so the
+        # heredoc body is discarded.
+        "xargs -I{} sh -c '{}' <<B <<< 'echo hi'\nshutdown\nB",
+        # Benign bodies through two heredocs stay allowed.
+        "bash <<B\necho hi\nB\ncat <<A | xargs -I{} sh -c '{}'\necho hi\nA",
+        "cat <<A | head -1\nhello\nA\nxargs -I{} rm -rf {} <<B\n/tmp/ok\nB",
+    ],
+)
+def test_benign_still_allowed_v123(client, command):
     assert server.check_dangerous(command) is None, command
