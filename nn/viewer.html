@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>linux-remote NN — denylist triage scorer</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --text:#e6edf3;
+          --muted:#8b949e; --green:#3fb950; --red:#f85149; --amber:#d29922;
+          --blue:#58a6ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  header { padding:20px 24px 8px; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  h2 { font-size:16px; margin:0 0 10px; }
+  .sub { color:var(--muted); font-size:13px; }
+  main { padding:12px 24px 40px; display:grid; gap:16px;
+         grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); }
+  .card { background:var(--panel); border:1px solid var(--line);
+          border-radius:8px; padding:16px; }
+  .wide { grid-column:1 / -1; }
+  .warn { background:#3a2b00; border:1px solid var(--amber); color:#ffd479;
+          border-radius:8px; padding:12px 16px; font-size:13px; }
+  .metrics { display:flex; flex-wrap:wrap; gap:12px; }
+  .metric { flex:1 1 120px; background:#0d1117; border:1px solid var(--line);
+            border-radius:6px; padding:10px; }
+  .metric .v { font-size:22px; font-weight:700; }
+  .metric .k { color:var(--muted); font-size:12px; margin-top:2px; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th, td { border:1px solid var(--line); padding:6px 10px; text-align:left; }
+  th { color:var(--muted); font-weight:600; }
+  .bar-row { display:grid; grid-template-columns:170px 1fr 56px; gap:8px;
+             align-items:center; font-size:12px; margin:5px 0; }
+  .bar { height:12px; background:#0d1117; border:1px solid var(--line);
+         border-radius:3px; overflow:hidden; }
+  .bar > div { height:100%; background:var(--blue); }
+  .bar-row.neg .bar > div { background:var(--red); }
+  code { background:#0d1117; border:1px solid var(--line); border-radius:4px;
+         padding:1px 5px; font-size:12px; }
+  ul { margin:8px 0; padding-left:20px; font-size:13px; }
+  li { margin-bottom:4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>linux-remote NN &mdash; denylist triage scorer</h1>
+  <div class="sub">Pure Python stdlib MLP. Predicts whether a shell command looks
+  like one the destructive-command denylist blocks. Triage only.</div>
+</header>
+<main>
+  <div class="card wide warn" id="limits"></div>
+  <div class="card wide">
+    <h2>Test metrics (held-out, never trained on)</h2>
+    <div class="metrics" id="metrics"></div>
+  </div>
+  <div class="card">
+    <h2>Confusion (test)</h2>
+    <table id="confusion"></table>
+  </div>
+  <div class="card">
+    <h2>Per-class precision / recall / F1 (test)</h2>
+    <table id="prf"></table>
+  </div>
+  <div class="card wide">
+    <h2>Feature importance (grouped permutation, ROC AUC drop on test)</h2>
+    <div id="importance"></div>
+  </div>
+  <div class="card wide">
+    <h2>Dataset &amp; model</h2>
+    <div class="sub" id="dataset"></div>
+    <p class="sub">Score one command:
+    <code>python -m nn.score --command "rm -rf /"</code></p>
+    <p class="sub">Retrain:
+    <code>python -m nn.train</code> (reads the denylist test suite)</p>
+  </div>
+</main>
+<!-- NN-DATA-START -->
+<script type="application/json" id="nn-data">
+{
+  "trained_at": "2026-11-14T06:01:08.768198+00:00",
+  "layers": [
+    114,
+    16,
+    8,
+    1
+  ],
+  "n_features": 114,
+  "feature_names": [
+    "first:echo",
+    "first:python3",
+    "first:rm",
+    "first:unshare",
+    "first:env",
+    "first:bash",
+    "first:sudo",
+    "first:setpriv",
+    "first:nsenter",
+    "first:runuser",
+    "first:node",
+    "first:chroot",
+    "first:find",
+    "first:systemd-run",
+    "first:chmod",
+    "first:cat",
+    "first:OTHER",
+    "word:rm",
+    "word:dd",
+    "word:mkfs",
+    "word:shred",
+    "word:reboot",
+    "word:shutdown",
+    "word:halt",
+    "word:poweroff",
+    "word:sudo",
+    "word:eval",
+    "word:xargs",
+    "word:find",
+    "word:chmod",
+    "word:chown",
+    "word:mv",
+    "word:cp",
+    "word:rmtree",
+    "word:rm_rf",
+    "word:unlink",
+    "word:shutil",
+    "word:remove",
+    "word:system",
+    "word:popen",
+    "word:exec",
+    "word:python",
+    "word:python3",
+    "word:node",
+    "word:perl",
+    "word:ruby",
+    "word:bash",
+    "word:sh",
+    "word:curl",
+    "word:wget",
+    "word:wipe",
+    "word:fork",
+    "word:kill",
+    "word:killall",
+    "word:pkill",
+    "word:mount",
+    "word:umount",
+    "word:iptables",
+    "word:useradd",
+    "word:passwd",
+    "word:chroot",
+    "word:tar",
+    "word:gzip",
+    "word:tee",
+    "word:env",
+    "word:setsid",
+    "word:nohup",
+    "word:watch",
+    "word:cron",
+    "has:-rf",
+    "has:--recursive",
+    "has:--no-preserve-root",
+    "has:/dev/",
+    "has:/dev/sda",
+    "has:/dev/sdb",
+    "has:/dev/zero",
+    "has:/dev/null",
+    "has:~",
+    "has:$home",
+    "has:${home}",
+    "has:$(",
+    "has:`",
+    "has:||",
+    "has:&&",
+    "has:;",
+    "has:|",
+    "has:>",
+    "has:>>",
+    "has:<<",
+    "has:..",
+    "has:*",
+    "has:/etc",
+    "has:-c",
+    "has:-e",
+    "has:rmSync",
+    "has:rm_rf",
+    "has:FileUtils",
+    "has:os.remove",
+    "has:os.system",
+    "has:subprocess",
+    "has:shutil.rmtree",
+    "has::(){",
+    "has:&",
+    "has:expanduser",
+    "has:import shutil",
+    "has:import os",
+    "has:require('fs')",
+    "has:require(\"fs\")",
+    "has:heredoc",
+    "has:PYEOF",
+    "len",
+    "ntokens",
+    "n_special",
+    "n_slashes"
+  ],
+  "dataset": {
+    "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign* lists",
+    "blocked_raw": 573,
+    "allowed_raw": 272,
+    "duplicate_commands_dropped": 21,
+    "skipped_nonstring_lists": 0,
+    "train_rows": 824,
+    "n_positive": 571,
+    "n_negative": 253
+  },
+  "train_rows": 659,
+  "test_rows": 165,
+  "train_metrics": {
+    "n": 659,
+    "n_positive": 457,
+    "n_negative": 202,
+    "threshold": 0.5,
+    "accuracy": 0.8361153262518968,
+    "majority_baseline_accuracy": 0.6934749620637329,
+    "roc_auc": 0.8615215460276882,
+    "confusion": {
+      "tn": 114,
+      "fp": 88,
+      "fn": 20,
+      "tp": 437
+    },
+    "precision_worth_validating": 0.8323809523809523,
+    "recall_worth_validating": 0.9562363238512035,
+    "f1_worth_validating": 0.890020366598778,
+    "precision_likely_fp": 0.8507462686567164,
+    "recall_likely_fp": 0.5643564356435643,
+    "f1_likely_fp": 0.6785714285714285
+  },
+  "test_metrics": {
+    "n": 165,
+    "n_positive": 114,
+    "n_negative": 51,
+    "threshold": 0.5,
+    "accuracy": 0.8303030303030303,
+    "majority_baseline_accuracy": 0.6909090909090909,
+    "roc_auc": 0.8562091503267973,
+    "confusion": {
+      "tn": 29,
+      "fp": 22,
+      "fn": 6,
+      "tp": 108
+    },
+    "precision_worth_validating": 0.8307692307692308,
+    "recall_worth_validating": 0.9473684210526315,
+    "f1_worth_validating": 0.8852459016393444,
+    "precision_likely_fp": 0.8285714285714286,
+    "recall_likely_fp": 0.5686274509803921,
+    "f1_likely_fp": 0.6744186046511628
+  },
+  "history": {
+    "loss": [
+      0.6306576040953252,
+      0.6098551534079203,
+      0.6013476775915175,
+      0.5957214405932758,
+      0.5903689105271115,
+      0.5848420271542849,
+      0.5790236884594638,
+      0.5727421122619928,
+      0.5663137871270845,
+      0.5603196805749233,
+      0.5535096243740061,
+      0.5471531065815787,
+      0.5411440197873679,
+      0.5358097911095695,
+      0.5293515910037078,
+      0.5236097432540279,
+      0.5184681567612494,
+      0.5137496275043616,
+      0.5087155421148531,
+      0.5044915751586561,
+      0.5004217994825558,
+      0.4961046811411577,
+      0.49205530274747605,
+      0.4882967549283577,
+      0.485754820367574,
+      0.48146542569332207,
+      0.4782868258865728,
+      0.4752621644388114,
+      0.4725788004039289,
+      0.469980150817258,
+      0.4686776984209805,
+      0.46542717755631713,
+      0.4632565222961109,
+      0.46045882631352825,
+      0.45871900062064785,
+      0.45733641504985195,
+      0.45455241603021856,
+      0.45454210512877785,
+      0.45017135968515387,
+      0.4486563158927149,
+      0.4476207760041128,
+      0.4438356508685953,
+      0.44259989866136473,
+      0.44240101791645314,
+      0.43922362161126705,
+      0.4371725381417768,
+      0.43662652597825735,
+      0.4338311214267485,
+      0.43359331542287594,
+      0.4313273413634839,
+      0.4293634335018324,
+      0.4316624821685854,
+      0.4288488663812589,
+      0.425343119197198,
+      0.4248621735529601,
+      0.42276043853955936,
+      0.4234915287965059,
+      0.42017396514038863,
+      0.422565505300938,
+      0.417717868866371,
+      0.41705908955354193,
+      0.4179026005228408,
+      0.4156940723832293,
+      0.41297952837791113,
+      0.41435412841834024,
+      0.41133470895290414,
+      0.4113237024590553,
+      0.410679988748806,
+      0.42271888374339545,
+      0.4071152760938425,
+      0.40728823630257627,
+      0.4077688830809259,
+      0.41077141703139114,
+      0.4064950094698379,
+      0.4079536822616138,
+      0.4016810077212382,
+      0.40113662528731386,
+      0.40198565980356277,
+      0.40009585000959474,
+      0.3995765058792162
+    ],
+    "train_acc": [
+      0.6949924127465857,
+      0.6934749620637329,
+      0.6934749620637329,
+      0.6934749620637329,
+      0.6934749620637329,
+      0.6965098634294385,
+      0.6980273141122914,
+      0.6980273141122914,
+      0.6980273141122914,
+      0.6965098634294385,
+      0.701062215477997,
+      0.7192716236722306,
+      0.7268588770864947,
+      0.7435508345978755,
+      0.7420333839150227,
+      0.7556904400606981,
+      0.7632776934749621,
+      0.7738998482549317,
+      0.7769347496206374,
+      0.7905918057663126,
+      0.7966616084977238,
+      0.7921092564491654,
+      0.7981790591805766,
+      0.8012139605462822,
+      0.7996965098634294,
+      0.8042488619119879,
+      0.8057663125948407,
+      0.8057663125948407,
+      0.8103186646433991,
+      0.8118361153262519,
+      0.8118361153262519,
+      0.8133535660091047,
+      0.8133535660091047,
+      0.8118361153262519,
+      0.8133535660091047,
+      0.8148710166919575,
+      0.8133535660091047,
+      0.8179059180576631,
+      0.8163884673748103,
+      0.8179059180576631,
+      0.8179059180576631,
+      0.8194233687405159,
+      0.8209408194233687,
+      0.8209408194233687,
+      0.8239757207890743,
+      0.8224582701062215,
+      0.8224582701062215,
+      0.8254931714719271,
+      0.8194233687405159,
+      0.8300455235204856,
+      0.8300455235204856,
+      0.8254931714719271,
+      0.8330804248861912,
+      0.8300455235204856,
+      0.8330804248861912,
+      0.8315629742033384,
+      0.8330804248861912,
+      0.8330804248861912,
+      0.8285280728376327,
+      0.834597875569044,
+      0.8330804248861912,
+      0.8330804248861912,
+      0.8330804248861912,
+      0.8300455235204856,
+      0.8300455235204856,
+      0.834597875569044,
+      0.8330804248861912,
+      0.834597875569044,
+      0.8285280728376327,
+      0.8315629742033384,
+      0.8315629742033384,
+      0.834597875569044,
+      0.8391502276176024,
+      0.8330804248861912,
+      0.8361153262518968,
+      0.8361153262518968,
+      0.8376327769347496,
+      0.834597875569044,
+      0.834597875569044,
+      0.8361153262518968
+    ],
+    "val_acc": [
+      0.6909090909090909,
+      0.6909090909090909,
+      0.6909090909090909,
+      0.6909090909090909,
+      0.6909090909090909,
+      0.6909090909090909,
+      0.6909090909090909,
+      0.696969696969697,
+      0.696969696969697,
+      0.703030303030303,
+      0.703030303030303,
+      0.703030303030303,
+      0.7151515151515152,
+      0.7272727272727273,
+      0.7212121212121212,
+      0.7333333333333333,
+      0.7454545454545455,
+      0.7818181818181819,
+      0.7757575757575758,
+      0.793939393939394,
+      0.793939393939394,
+      0.8,
+      0.793939393939394,
+      0.806060606060606,
+      0.806060606060606,
+      0.8121212121212121,
+      0.8121212121212121,
+      0.8121212121212121,
+      0.806060606060606,
+      0.8121212121212121,
+      0.8181818181818182,
+      0.8181818181818182,
+      0.8181818181818182,
+      0.8,
+      0.793939393939394,
+      0.8121212121212121,
+      0.8,
+      0.8181818181818182,
+      0.806060606060606,
+      0.8121212121212121,
+      0.806060606060606,
+      0.8,
+      0.806060606060606,
+      0.7878787878787878,
+      0.8121212121212121,
+      0.806060606060606,
+      0.8121212121212121,
+      0.806060606060606,
+      0.8121212121212121,
+      0.806060606060606,
+      0.8121212121212121,
+      0.8121212121212121,
+      0.8121212121212121,
+      0.8121212121212121,
+      0.8121212121212121,
+      0.8121212121212121,
+      0.8121212121212121,
+      0.8121212121212121,
+      0.8181818181818182,
+      0.8242424242424242,
+      0.8121212121212121,
+      0.8121212121212121,
+      0.8121212121212121,
+      0.8303030303030303,
+      0.8242424242424242,
+      0.8181818181818182,
+      0.8121212121212121,
+      0.8181818181818182,
+      0.8242424242424242,
+      0.8363636363636363,
+      0.8303030303030303,
+      0.8242424242424242,
+      0.8242424242424242,
+      0.8181818181818182,
+      0.8181818181818182,
+      0.8303030303030303,
+      0.8242424242424242,
+      0.8303030303030303,
+      0.8363636363636363,
+      0.8303030303030303
+    ]
+  },
+  "feature_importance": [
+    {
+      "group": "word_tokens",
+      "auc_drop": 0.2298
+    },
+    {
+      "group": "operators_paths",
+      "auc_drop": 0.1686
+    },
+    {
+      "group": "first_token",
+      "auc_drop": 0.0547
+    },
+    {
+      "group": "length",
+      "auc_drop": 0.01
+    }
+  ],
+  "limits": [
+    "Triage only. The model ranks commands by how much they look like past commands the denylist blocked. It does not verify anything.",
+    "The denylist (server.check_dangerous) stays the only gate. A low score never means a command is safe, and this model must never be used to bypass, weaken, or replace the denylist.",
+    "Label skew: the training set is 69% blocked / 31% allowed (571 blocked / 253 allowed of 824 commands). Accuracy near the majority baseline means the model learned nothing; judge it by minority-class recall and ROC AUC instead.",
+    "Commands using constructs unseen in training fall into the OTHER bucket; the model has no opinion about them beyond the generic token/operator features."
+  ],
+  "seed": 42,
+  "epochs": 80,
+  "lr": 0.05
+}
+</script>
+<!-- NN-DATA-END -->
+<script>
+const d = JSON.parse(document.getElementById("nn-data").textContent || "{}");
+const tm = d.test_metrics || {}, tr = d.train_metrics || {};
+const fmt = (v) => (v == null ? "n/a" : (+v).toFixed(3));
+document.getElementById("limits").innerHTML =
+  "<b>Triage only.</b><ul>" + (d.limits || []).map((l) => "<li>" + l + "</li>").join("") + "</ul>";
+const mets = [
+  ["Test accuracy", fmt(tm.accuracy)],
+  ["Train accuracy", fmt(tr.accuracy)],
+  ["Majority baseline (test)", fmt(tm.majority_baseline_accuracy)],
+  ["Test ROC AUC", fmt(tm.roc_auc)],
+  ["Test rows", d.test_rows], ["Train rows", d.train_rows],
+  ["Features", d.n_features], ["Layers", (d.layers || []).join("-")],
+];
+document.getElementById("metrics").innerHTML = mets.map(([k, v]) =>
+  `<div class="metric"><div class="v">${v}</div><div class="k">${k}</div></div>`).join("");
+const cm = tm.confusion || {};
+document.getElementById("confusion").innerHTML =
+  `<tr><th></th><th>Predicted blocked</th><th>Predicted allowed</th></tr>
+   <tr><td>Actually blocked</td><td>${cm.tp ?? "-"}</td><td>${cm.fn ?? "-"}</td></tr>
+   <tr><td>Actually allowed</td><td>${cm.fp ?? "-"}</td><td>${cm.tn ?? "-"}</td></tr>`;
+document.getElementById("prf").innerHTML =
+  `<tr><th>Class</th><th>Precision</th><th>Recall</th><th>F1</th></tr>
+   <tr><td>blocked</td><td>${fmt(tm.precision_worth_validating)}</td><td>${fmt(tm.recall_worth_validating)}</td><td>${fmt(tm.f1_worth_validating)}</td></tr>
+   <tr><td>allowed</td><td>${fmt(tm.precision_likely_fp)}</td><td>${fmt(tm.recall_likely_fp)}</td><td>${fmt(tm.f1_likely_fp)}</td></tr>`;
+const imp = d.feature_importance || [];
+const maxDrop = Math.max(0.001, ...imp.map((x) => Math.abs(x.auc_drop)));
+document.getElementById("importance").innerHTML = imp.map((x) => {
+  const pct = Math.abs(x.auc_drop) / maxDrop * 100;
+  const cls = x.auc_drop < 0 ? "bar-row neg" : "bar-row";
+  return `<div class="${cls}"><span>${x.group}</span><div class="bar"><div style="width:${pct.toFixed(1)}%"></div></div><span>${x.auc_drop.toFixed(3)}</span></div>`;
+}).join("");
+const ds = d.dataset || {};
+document.getElementById("dataset").innerHTML =
+  `Source: ${ds.source || "n/a"}<br>Rows: ${ds.train_rows} total ` +
+  `(${ds.n_positive} blocked / ${ds.n_negative} allowed), ` +
+  `${ds.blocked_raw} blocked + ${ds.allowed_raw} allowed raw, ` +
+  `${ds.duplicate_commands_dropped} duplicate commands dropped.<br>` +
+  `Trained at: ${d.trained_at || "n/a"} &middot; seed ${d.seed} &middot; epochs ${d.epochs} &middot; lr ${d.lr}`;
+</script>
+</body>
+</html>
