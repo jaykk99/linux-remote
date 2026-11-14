@@ -1,0 +1,1 @@
+{"exp_id": "exp-0001", "config": {"hidden": [16, 8], "lr": 0.05, "l2": 0.0001, "epochs": 60, "seed": 42}, "test_acc": 0.6889, "auc": 0.7061, "confusion": {"tp": 86, "fp": 17, "tn": 38, "fn": 39}, "per_class_recall": {"blocked": 0.688, "allowed": 0.6909}, "seconds": 49.5}

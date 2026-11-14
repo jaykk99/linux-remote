@@ -1,0 +1,844 @@
+{"command": "rm -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf / ", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "sudo rm -rf /tmp/..;/bin/rm -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ~", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ~/", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $HOME", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $HOME/", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf \"$HOME\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ${HOME}", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ${HOME}/", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "sudo rm -rf $HOME", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "dd if=/dev/zero of=/dev/sda bs=1M", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "dd"}
+{"command": "mkfs.ext4 /dev/sda1", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "mkfs.ext4"}
+{"command": ":(){ :|:& };:", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": ":(){"}
+{"command": "sudo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "reboot"}
+{"command": "shutdown -h now", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "shutdown"}
+{"command": "echo hi > /dev/sda", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "shred -u /dev/sdb", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "shred"}
+{"command": "rm -rf / --no-preserve-root", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf /*", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf / *", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "sudo rm -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "sudo rm -rf /* --no-preserve-root", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "sudo rm -rf /tmp/..; rm -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $HOME/*", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ~/*", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf \"$HOME\"/*", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf '$HOME'/*", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $HOME/..", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ~/../", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf \"$HOME\"/..", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ${HOME}/..", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "sudo rm -rf $HOME/*", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ..", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ../", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ../*", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf /tmp/..", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf foo/../..", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "sudo rm -rf ..", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf \"..\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "find / -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find / -type f -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find ~ -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find $HOME -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find ${HOME} -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find .. -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find / -exec rm {} +", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "sudo find / -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "chmod -R 000 /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chmod --recursive 000 /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chown -R root /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chown"}
+{"command": "sudo chmod -R 755 ~", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chmod -R 000 $HOME", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chmod -R 000 /*", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "rm -rf /.", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf //", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ///", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf /./", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf /./*", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf //*", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "sudo rm -rf /.", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "find /. -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find // -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find /./ -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find /* -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "sudo find /. -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "chmod -R 000 /.", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chmod -R 000 /..", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chmod -R 000 /./", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chown -R root /.", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chown"}
+{"command": "sudo chmod -R 000 /.", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "rm -rf $'/'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $'\\x2f'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $'\\057'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $'\\x2f\\x2f'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $'\\x2f.'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $'\\x2f'*", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf \\/", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf \\/\\/", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf \\/.", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf /$''", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf /$''*", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $HOME$''", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ''$HOME", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $'\\x2e\\x2e'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf \\.\\.", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf /tmp/$'..'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm --recursive --force /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm --recursive --force $'\\x2f'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -r --force /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "find $'/' -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find $'\\x2f' -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find \\/ -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find /$'' -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find $HOME$'' -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "chmod -R 000 \\/", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chmod -R 000 $'\\x2f'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chmod -R 000 $'\\x2f.'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chmod -R 000 $HOME$''", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chown -R root $'\\x2f'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chown"}
+{"command": "r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "r\"m\" -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\"m\""}
+{"command": "\"r\"m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "\"r\"m"}
+{"command": "r''m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r''m"}
+{"command": "''rm -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "''rm"}
+{"command": "$'r\\m' -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "$'r\\m'"}
+{"command": "$'rm' -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "$'rm'"}
+{"command": "'rm' -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "'rm'"}
+{"command": "\"rm\" -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "\"rm\""}
+{"command": "sudo r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "sudo -u root r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-u"}
+{"command": "sudo -n r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-n"}
+{"command": "sudo sudo r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "env r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "env -i r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-i"}
+{"command": "env FOO=bar r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "foo=bar"}
+{"command": "FOO=bar r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "foo=bar"}
+{"command": "command r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "/bin/r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "/bin/r\\m"}
+{"command": "r\\m --recursive --force /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "r\\m -rf /tmp/..", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "r\\m -rf $HOME", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "r\\m -rf / --no-preserve-root", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "m\\kfs.ext4 /dev/sda", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "m\\kfs.ext4"}
+{"command": "d\\d if=/dev/zero of=/dev/sda", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "d\\d"}
+{"command": "shutdow\\n -h now", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "shutdow\\n"}
+{"command": "chmo\\d -R 000 /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmo\\d"}
+{"command": "fin\\d / -delete", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "fin\\d"}
+{"command": "shre\\d /dev/sda", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "shre\\d"}
+{"command": "ls /tmp; r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ls"}
+{"command": "echo ok && r\"m\" -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "shred /dev/sda", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "shred"}
+{"command": "shred -v /dev/sda", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "shred"}
+{"command": "echo $(rm -rf /)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "`rm -rf /`", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "`rm"}
+{"command": "(rm -rf /)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "(rm"}
+{"command": "true && (rm -rf /)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "true"}
+{"command": "echo x | (rm -rf /)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo \"$(rm -rf /)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo $(r\\m -rf /)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo ${x:-$(rm -rf /)}", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo $(( $(rm -rf /) + 1 ))", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "arr=(x $(rm -rf /) y)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "arr=(x"}
+{"command": "echo $(echo $(rm -rf /))", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo <(rm -rf /)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "time (rm -rf /)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "time"}
+{"command": "echo $(find / -delete)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo $(chmod -R 000 /)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo $(shutdown -h now)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo $(rm -rf /) && echo done", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "bash -c 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c 'halt'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c 'poweroff'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "sh -c 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "sh"}
+{"command": "dash -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "dash"}
+{"command": "sudo bash -c 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "sudo -u root bash -c 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-u"}
+{"command": "command bash -c 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "env bash -c 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "/bin/bash -c 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "/bin/bash"}
+{"command": "ba\\sh -c 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ba\\sh"}
+{"command": "bash -xc 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c \"shutdown -h now\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "eval 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "eval"}
+{"command": "eval 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "eval"}
+{"command": "eval \"shutdown -h now\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "eval"}
+{"command": "eval shutdown -h now", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "eval"}
+{"command": "eval -- 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "eval"}
+{"command": "echo hi; eval 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "bash -c 'eval \"rm -rf /\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c 'eval \"shutdown -h now\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c 'shutdow\\n -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "echo $(bash -c 'shutdown -h now')", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo $(eval 'shutdown -h now')", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "bash -c 'rm -rf /'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "eval 'rm -rf /'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "eval"}
+{"command": "bash -c 'dd if=/dev/zero of=/dev/sda'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c 'mkfs.ext4 /dev/sda'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c 'chmod -R 000 /'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c 'find / -delete'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash <<'EOF'\nshutdown -h now\nEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash <<'EOF'\nrm -rf /\nEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "sh <<'EOF'\nreboot\nEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "sh"}
+{"command": "bash -s <<'EOF'\nshutdown -h now\nEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "sudo bash <<'EOF'\nshutdown -h now\nEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "cat <<'EOF' | bash\nshutdown -h now\nEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "cat <<'EOF' | python3\nimport os\nos.system('rm -rf /')\nEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "bash <<< 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "python3 <<< 'import os; os.system(\"rm -rf /\")'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "bash <<-'EOF'\n\tshutdown -h now\n\tEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "python3 <<'PYEOF'\nimport os\nos.system('rm -rf /')\nPYEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 <<'PYEOF'\nimport shutil\nshutil.rmtree('/')\nPYEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 - <<'PYEOF'\nimport os\nos.system('shutdown -h now')\nPYEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import os; os.system('rm -rf /')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import os; os.system('shutdown -h now')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import os; os.popen('rm -rf /')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import subprocess; subprocess.call(['rm', '-rf', '/'])\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import subprocess; subprocess.call('rm -rf /', shell=True)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "perl -e 'system(\"rm -rf /\")'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "perl -e 'system(\"shutdown -h now\")'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "perl -e 'system \"rm -rf /\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "perl -e '`rm -rf /`'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "ruby -e 'system(\"rm -rf /\")'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ruby"}
+{"command": "node -e \"require('child_process').execSync('rm -rf /')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "php -r 'system(\"rm -rf /\");'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "php"}
+{"command": "python3 -c \"import shutil; shutil.rmtree('/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil, os; shutil.rmtree(os.path.expanduser('~'))\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "perl -e 'use File::Path qw(rmtree); rmtree(\"/\")'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "ruby -e 'require \"fileutils\"; FileUtils.rm_rf(\"/\")'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ruby"}
+{"command": "bash -c '$cmd'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c \"$cmd\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "eval \"$cmd\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "eval"}
+{"command": "cmd='shutdown -h now'; eval \"$cmd\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cmd='shutdown"}
+{"command": "cmd='rm -rf /'; bash -c \"$cmd\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cmd='rm"}
+{"command": "python3 -c \"$code\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "bash -c 'python3 -c \"import os; os.system(\\\"rm -rf /\\\")\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c 'echo hi; shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "echo $(python3 -c \"import os; os.system('rm -rf /')\")", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo hi\nshutdown", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo hi\nshutdown -h now", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo hi\nsudo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo hi\n  halt", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo hi\npoweroff", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo hi\nSHUTDOWN", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "ls /tmp\nreboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ls"}
+{"command": "echo hi\n\"shutdown\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo hi\nshut\\down", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "if true; then\nshutdown\nfi", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "if"}
+{"command": "bash <<'EOF'\necho hi\nshutdown -h now\nEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "echo $(\necho hi\nshutdown\n)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo hi\nshutdown <<'EOF'\nhello\nEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "cat <<'EOF'\nhello\nEOF\nreboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "time reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "time"}
+{"command": "time -p reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "time"}
+{"command": "command reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "reboot"}
+{"command": "command -p reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-p"}
+{"command": "command -- reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "--"}
+{"command": "env reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "reboot"}
+{"command": "env -i reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-i"}
+{"command": "env FOO=bar reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "foo=bar"}
+{"command": "env -u FOO reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-u"}
+{"command": "env -S reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'FOO=bar reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'sudo reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "nice reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nice"}
+{"command": "nice -n 5 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nice"}
+{"command": "nice --adjustment=5 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nice"}
+{"command": "nohup reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "reboot"}
+{"command": "nohup -- reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "--"}
+{"command": "timeout 5 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "5"}
+{"command": "timeout --signal=KILL 5 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "--signal=kill"}
+{"command": "timeout -s KILL 5 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "timeout -k 2 5 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-k"}
+{"command": "sudo -n reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-n"}
+{"command": "sudo -u root reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-u"}
+{"command": "sudo -- reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "--"}
+{"command": "sudo -u root -n reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-u"}
+{"command": "exec reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "reboot"}
+{"command": "exec -a foo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-a"}
+{"command": "busybox reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "busybox"}
+{"command": "coproc reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "coproc"}
+{"command": "coproc foo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "coproc"}
+{"command": "sudo sudo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "reboot"}
+{"command": "time sudo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "time"}
+{"command": "env -i sudo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-i"}
+{"command": "sudo time reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "time"}
+{"command": "time \"reboot\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "time"}
+{"command": "time reb\\oot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "time"}
+{"command": "sudo \"reboot\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "\"reboot\""}
+{"command": "if true; then reboot; fi", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "if"}
+{"command": "if true; then shutdown -h now; fi", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "if"}
+{"command": "if true; then sudo reboot; fi", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "if"}
+{"command": "if reboot; then echo; fi", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "if"}
+{"command": "while true; do reboot; done", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "while"}
+{"command": "until false; do reboot; done", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "until"}
+{"command": "for i in x; do reboot; done", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "for"}
+{"command": "if true; then time reboot; fi", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "if"}
+{"command": "if true; then sudo -n reboot; fi", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "if"}
+{"command": "f() { reboot; }; f", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "f()"}
+{"command": "f() { reboot; }", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "f()"}
+{"command": "{ reboot; }", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "{"}
+{"command": "{ echo hi; reboot; }", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "{"}
+{"command": "case $x in foo) reboot;; esac", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "case"}
+{"command": "find . -exec reboot \\;", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find . -exec sudo reboot \\;", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "sudo find . -exec reboot \\;", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "FOO=bar reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "foo=bar"}
+{"command": "FOO=bar time reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "foo=bar"}
+{"command": "! reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "!"}
+{"command": "! time reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "!"}
+{"command": "time reboot && echo hi", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "time"}
+{"command": "echo a && time reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo $(time reboot)", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "bash -c 'time reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "chroot /mnt reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot / reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot --userspec=0:0 / reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot --userspec 0:0 / reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot --groups 0,1 /mnt shutdown", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot --skip-chdir / halt", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot /mnt poweroff", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot -- /mnt reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "nsenter -t 1 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter --target 1 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter --target=1 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -t1 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -t 1 -m reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -m -t 1 shutdown", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -t 1 -p halt", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -W /ns reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter --wdns /ns reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -w/ns reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "systemd-run reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --scope reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --unit=myunit reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --unit myunit reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run -u myunit reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run -p Foo=bar reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --property Foo=bar reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --scope --unit=x --description test reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --on-calendar daily shutdown", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --working-directory /tmp halt", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run -E FOO=bar poweroff", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --slice foo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "sudo nsenter -t 1 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -t 1 sudo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "sudo systemd-run --scope reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --scope sudo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "sudo chroot / reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "time chroot / reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "time"}
+{"command": "if true; then chroot / reboot; fi", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "if"}
+{"command": "env -S 'chroot / reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "chroot /mnt sh -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "nsenter -t 1 sh -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "systemd-run --scope sh -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "timeout 5 sh -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "5"}
+{"command": "nohup sh -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "sh"}
+{"command": "busybox sh -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "busybox"}
+{"command": "sudo chroot / sh -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot / sudo sh -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot /mnt python3 -c 'import os; os.system(\"reboot\")'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "timeout 5 python3 -c 'import os; os.system(\"reboot\")'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "5"}
+{"command": "nsenter -t 1 r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "chroot /mnt r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "systemd-run --scope r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "timeout 5 r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "5"}
+{"command": "nohup r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "exec r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "busybox r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "busybox"}
+{"command": "nsenter -t 1 'rm' -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -t 1 r\"m\" -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "chroot /mnt 'rm' -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "sudo nsenter -t 1 r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -t 1 sudo r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "echo hi; nsenter -t 1 r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "coproc r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "coproc"}
+{"command": "coproc foo r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "coproc"}
+{"command": "coproc sudo r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "coproc"}
+{"command": "sudo coproc r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "coproc"}
+{"command": "nsenter -t 1 coproc r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "unshare -f reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --fork reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --mount reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -m reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -r reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --map-root-user reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -U -r shutdown", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --fork --mount-proc halt", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --kill-child reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --kill-child=SIGTERM reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -R /mnt reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --root /mnt reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --root=/mnt reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -w /tmp reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --wd /tmp reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -S 0 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --setuid 0 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -G 0 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --setgid 0 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --propagation slave reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --propagation=slave reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --setgroups deny reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --monotonic 1 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --boottime 1 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --map-user 0 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --map-user=0 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --map-group 0 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --map-users 0:0:1 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --map-groups 0:0:1 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --mount=/ns reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -m/ns reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -f -m shutdown", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -- reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -fR /mnt reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "setpriv reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --reuid 0 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --reuid=0 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --ruid 0 --euid 0 --rgid 0 --egid 0 shutdown", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --nnp reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --no-new-privs reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --reset-env reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --ambient-caps cap_net_admin reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --inh-caps cap_net_admin reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --bounding-set cap_net_admin reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --clear-groups reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --keep-groups reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --init-groups reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --groups 0 reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --securebits keep_locked reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --pdeathsig keep reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --selinux-label foo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --apparmor-profile foo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "runuser -u root reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser --user root reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser --user=root reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser -u root -- reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser -u root -g wheel reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser -u root -m reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser -c reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser --command reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser --command=reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser --session-command reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser -c 'echo hi; reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser --command 'shutdown -h now'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "sudo unshare -f reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -f sudo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "sudo setpriv reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --reuid 0 sudo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "sudo runuser -u root reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser -u root sudo reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "time unshare -f reboot", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "time"}
+{"command": "if true; then setpriv reboot; fi", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "if"}
+{"command": "env -S 'unshare -f reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'runuser -u root reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "unshare -f sh -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "setpriv --reuid 0 sh -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "runuser -u root sh -c 'reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "unshare -f python3 -c 'import os; os.system(\"reboot\")'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "setpriv --reuid 0 python3 -c 'import os; os.system(\"reboot\")'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "unshare -f r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "setpriv r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "runuser -u root r\\m -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "unshare -f 'rm' -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "setpriv r\"m\" -rf /", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "env -S 'bash -c reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'sh -c \"rm -rf /\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'bash -c \"rm -rf /\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'sh -c \"shutdown -h now\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'python3 -c \"import os; os.system(\\\"reboot\\\")\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'python3 -c \"import subprocess; subprocess.run([\\\"reboot\\\"])\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'perl -e \"system(\\\"reboot\\\")\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'node -e \"require(\\\"child_process\\\").execSync(\\\"reboot\\\")\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'ruby -e \"system(\\\"reboot\\\")\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'sudo bash -c reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'timeout 5 bash -c reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'FOO=bar bash -c reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'unshare -f bash -c reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'env -S \"bash -c reboot\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env --split-string 'bash -c reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "--split-string"}
+{"command": "env --split-string='bash -c reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "--split-string='bash"}
+{"command": "env --split-string 'python3 -c \"import os; os.system(\\\"reboot\\\")\"'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "--split-string"}
+{"command": "env -S'bash -c reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s'bash"}
+{"command": "env -iS 'bash -c reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-is"}
+{"command": "env -iS'bash -c reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-is'bash"}
+{"command": "env -S 'bash -c reboot' extra", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'echo hi; reboot'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "cmd='shutdown -h now'; python3 -c \"import os; os.system('$cmd')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cmd='shutdown"}
+{"command": "cmd='shutdown -h now'; python3 -c \"import os; os.system(\\\"${cmd}\\\")\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cmd='shutdown"}
+{"command": "python3 -c \"import os; cmd='shutdown -h now'; os.system(cmd)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import os; cmd='poweroff'; os.system(cmd)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import os; cmd='rm -rf /'; os.system(cmd)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import subprocess; cmd='shutdown -h now'; subprocess.run(cmd, shell=True)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import subprocess; cmd=['rm', '-rf', '/']; subprocess.run(cmd)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "node -e \"const {execSync}=require('child_process'); cmd='halt'; execSync(cmd)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "cmd='reboot'; perl -e 'system $cmd'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cmd='reboot';"}
+{"command": "cmd='poweroff'; ruby -e 'system $cmd'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cmd='poweroff';"}
+{"command": "cmd='reboot'; php -r 'system($cmd);'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cmd='reboot';"}
+{"command": "python3 <<'EOF'\nimport os\ncmd='shutdown -h now'\nos.system(cmd)\nEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import os; os.system(cmd)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "cmd='reboot'; python3 -c \"import os; os.system(other_cmd)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cmd='reboot';"}
+{"command": "echo / | xargs rm -rf", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo / | xargs rm --recursive --force", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo -n / | xargs rm -rf", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo /tmp/x / | xargs rm -rf", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo / | xargs rm -rf --no-preserve-root", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "printf '/\\n' | xargs rm -rf", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "printf"}
+{"command": "printf '%s\\n' / | xargs rm -rf", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "printf"}
+{"command": "echo '-h now' | xargs shutdown", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo /dev/sda | xargs shred", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo /dev/sda1 | xargs mkfs.ext4", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo 'rm -rf /' | xargs -I{} sh -c '{}'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo 'rm -rf /' | xargs -I CMD sh -c CMD", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo / | xargs -I{} rm -rf {}", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo reboot | xargs -I{} sh -c '{}'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "xargs rm -rf <<< '/'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "xargs"}
+{"command": "xargs rm -rf <<EOF\n/\nEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "xargs"}
+{"command": "cat <<EOF | xargs rm -rf\n/\nEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "echo / | sudo xargs rm -rf", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "bash -c 'echo / | xargs rm -rf'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "printf '/\\0' | xargs -0 rm -rf", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "printf"}
+{"command": "tgt='/'; echo $tgt | xargs rm -rf", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "tgt='/';"}
+{"command": "python3 -c \"import shutil; p = '/'; shutil.rmtree(p)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; p = '..'; shutil.rmtree(p)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "perl -e 'use File::Path qw(rmtree); $d = \"/\"; rmtree($d)'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "perl -e 'use File::Path qw(rmtree); $d = \"/\"; rmtree $d'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "ruby -e 'require \"fileutils\"; d = \"/\"; FileUtils.rm_rf(d)'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ruby"}
+{"command": "node -e \"const fs = require('fs'); const d = '/'; fs.rmSync(d, {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"require('fs').rmSync('/', {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"require('fs').rmSync(d, {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "python3 -c \"import shutil; shutil.rmtree(path='/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; p = '/'; shutil.rmtree(path=p)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; shutil.rmtree('/tmp/build'); shutil.rmtree('/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; shutil.rmtree('/tmp/a'); shutil.rmtree(p)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil, os; p = os.path.expanduser('~'); shutil.rmtree(p)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "perl -e 'use File::Path qw(rmtree); $d = $ENV{HOME}; rmtree($d)'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "ruby -e 'require \"fileutils\"; d = Dir.home; FileUtils.rm_rf(d)'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ruby"}
+{"command": "python3 -c \"import shutil; shutil.rmtree(target)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; p = chr(47); shutil.rmtree(p)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "perl -e 'use File::Path qw(rmtree); rmtree($d)'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "ruby -e 'require \"fileutils\"; FileUtils.rm_rf(d)'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ruby"}
+{"command": "node -e \"const fs = require('fs'); fs.rmSync(d, {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "d='/'; perl -e 'use File::Path qw(rmtree); rmtree($d)'", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "d='/';"}
+{"command": "python3 <<'PYEOF'\nimport shutil\np = '/'\nshutil.rmtree(p)\nPYEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree; rmtree('/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree; rmtree('..')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree as rt; rt('/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import copy, rmtree; rmtree('/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import *; rmtree('/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil as sh; sh.rmtree('/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree; p = '/'; rmtree(p)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree; rmtree(target)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree; import os; p = os.path.expanduser('~'); rmtree(p)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree; rmtree(path='/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree; rmtree('/tmp/a'); rmtree('/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 <<'PYEOF'\nfrom shutil import rmtree\nrmtree('/')\nPYEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 <<'PYEOF'\nfrom shutil import (\n rmtree,\n)\nrmtree('/')\nPYEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; getattr(shutil, 'rmtree')('/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; getattr(shutil, 'rmtree')('..')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil as sh; getattr(sh, 'rmtree')('/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; name = 'rmtree'; getattr(shutil, name)('/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; p = '/'; getattr(shutil, 'rmtree')(p)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; getattr(shutil, 'rmtree')(target)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; getattr(shutil, 'rmtree')(ignore_errors=True, path='/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 <<'PYEOF'\nimport shutil\ngetattr(shutil, 'rmtree')('/')\nPYEOF", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; shutil.rmtree(ignore_errors=True, path='/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; shutil.rmtree(ignore_errors=True, path='..')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; p = '/'; shutil.rmtree(ignore_errors=True, path=p)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; shutil.rmtree(ignore_errors=True, path=target)\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; shutil.rmtree('/tmp/a', ignore_errors=True, path='/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree; rmtree(ignore_errors=True, path='/')\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "node -e \"const {rmSync} = require('fs'); rmSync('/', {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"const {rmSync: delTree} = require('fs'); delTree('/', {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"const {rmdirSync} = require('fs'); rmdirSync('/', {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"const {rmSync} = require('node:fs'); rmSync('/', {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"const fs = require('fs'); const {rmSync} = fs; rmSync('/', {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"import {rmSync} from 'fs'; rmSync('/', {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"const fs = require('fs'); fs['rmSync']('/', {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"require('fs')['rmSync']('/', {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"const {rmSync} = require('fs'); const p = '/'; rmSync(p, {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"const {rmSync} = require('fs'); rmSync(d, {recursive: true})\"", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "cat <<A | head -1\nhello\nA\nxargs -I{} sh -c '{}' <<B\nshutdown\nB", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "bash <<B\necho hi\nB\nxargs -I{} sh -c '{}' <<A\nreboot\nA", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash <<B\necho hi\nB\ncat <<A | xargs -I{} sh -c '{}'\nshutdown\nA", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "cat <<A | head -1\nhello\nA\nbash <<C\necho hi\nC\nxargs -I{} sh -c '{}' <<B\npoweroff\nB", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "cat <<A | head -1\nhello\nA\nxargs -I{} rm -rf {} <<B\n/\nB", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "xargs -I{} sh -c '{}' <<A <<B\necho hi\nA\nshutdown\nB", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "xargs"}
+{"command": "xargs -I{} sh -c '{}' <<< 'echo hi' <<B\nshutdown\nB", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "xargs"}
+{"command": "cat <<A | head -1\nhello\nA\nxargs -I{} sh -c '{}' <<-B\nshutdown\n\tB", "label": 1, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "echo hello", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "ls -la /tmp", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ls"}
+{"command": "rm -rf /tmp/my-scratch-dir", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $HOME/cache", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf ~/projects/scratch", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "echo $HOME", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "rm /tmp/some-file", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "df -h", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "df"}
+{"command": "dd if=/dev/zero of=/tmp/test.img bs=1M count=1", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "dd"}
+{"command": "grep -r reboot /tmp", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "grep"}
+{"command": "echo shutdown", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "rm -rf ~/.cache/*", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $HOME/.cache", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "ls /", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ls"}
+{"command": "df -h /", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "df"}
+{"command": "echo /", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "grep -r / /tmp/x", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "grep"}
+{"command": "rm -rf ../build", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "find /tmp -delete", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "find ../build -delete", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "chmod 755 /tmp/file", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chmod -R 755 /tmp/mydir", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "chown -R user:group /tmp/mydir", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chown"}
+{"command": "rm ..", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -f /tmp/file", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $HOME/ca''che", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf /tmp/$'cache'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm -rf $'../build'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "rm --recursive --force /tmp/mydir", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "rm"}
+{"command": "find $HOME/cache -delete", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "chmod -R 755 $HOME/ca''che", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chmod"}
+{"command": "r\\m -rf /tmp/build", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "r\"m\" -rf ./build", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\"m\""}
+{"command": "r\\m -rf ../build", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "r\\m"}
+{"command": "sudo -n r\\m -rf /tmp/build", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-n"}
+{"command": "command -v r\\m", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-v"}
+{"command": "shred secret.txt", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "shred"}
+{"command": "shred /tmp/notes.txt", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "shred"}
+{"command": "echo \"r\\m -rf /\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo '$(rm -rf /)'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "grep -E '(a|b)' file", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "grep"}
+{"command": "foo() { echo hi; }", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "foo()"}
+{"command": "case $x in (a) echo hi;; esac", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "case"}
+{"command": "arr=(a b c)", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "arr=(a"}
+{"command": "echo $((1 + 2))", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo $(echo hi)", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo `echo hi`", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo \"date: $(date)\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "x=$(echo hi)", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "x=$(echo"}
+{"command": "echo ${x:-default}", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo $(echo $(date))", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo $(rm -rf /tmp/build)", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "bash -c 'echo hi'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c 'echo hi' && echo done", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "eval 'echo hi'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "eval"}
+{"command": "bash -c 'echo shutdown'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -c 'grep shutdown file'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "echo eval 'shutdown -h now'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "bash -c 'rm -rf /tmp/build'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -- -c shutdown", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "python3 -c \"print('hello')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import os; print(os.getcwd())\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"print('rm -rf /')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import os; os.system('ls /tmp')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; shutil.rmtree('/tmp/build')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -u -c \"print('hi')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "perl -e 'print \"hi\\n\"'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "perl -e 'system(\"ls /tmp\")'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "node --eval \"console.log('hi')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "php -d memory_limit=256M -r 'echo \"hi\";'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "php"}
+{"command": "cmd='ls /tmp'; bash -c \"$cmd\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cmd='ls"}
+{"command": "bash <<'EOF'\necho hello\nls /tmp\nEOF", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "bash -s <<'EOF'\necho hi\nEOF", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "python3 <<'EOF'\nprint('hello')\nEOF", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 - <<'EOF'\nprint('hi')\nEOF", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "cat > notes.txt <<'EOF'\nhello world\nEOF", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "bash script.sh <<'EOF'\nshutdown -h now\nEOF", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "python3 script.py <<'EOF'\nimport os\nos.system('rm -rf /')\nEOF", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "echo foo \\\nshutdown", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo \"foo\nshutdown\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "cat <<'EOF'\nshutdown\nEOF", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "cat <<EOF\nshutdown\nEOF", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "cat <<-EOF\n\tshutdown\n\tEOF", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "echo hi\nls /tmp", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo hi\ngrep -r reboot /tmp", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo hi\nshutdown_cmd=echo", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo hi\n# shutdown", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo $((1<<2))\nls /tmp", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "command -v reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-v"}
+{"command": "command -V reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-v"}
+{"command": "command -v reboot; ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-v"}
+{"command": "sudo -l reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-l"}
+{"command": "sudo -e reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-e"}
+{"command": "builtin reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "builtin"}
+{"command": "echo reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "myreboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "myreboot"}
+{"command": "reboot_cmd", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "reboot_cmd"}
+{"command": "VAR=reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "var=reboot"}
+{"command": "echo 'then reboot'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo \"then reboot\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "if true; then echo reboot; fi", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "if"}
+{"command": "f() { echo reboot; }", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "f()"}
+{"command": "time echo reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "time"}
+{"command": "echo time reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "case $x in reboot) echo hi;; esac", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "case"}
+{"command": "for reboot in x; do echo; done", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "for"}
+{"command": "find . -exec echo reboot \\;", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "echo find -exec reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "time ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "time"}
+{"command": "env ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ls"}
+{"command": "sudo ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ls"}
+{"command": "sudo -u root ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-u"}
+{"command": "timeout 5 ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "5"}
+{"command": "nice ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nice"}
+{"command": "nohup ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ls"}
+{"command": "timeout 5", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "5"}
+{"command": "env FOO=bar", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "foo=bar"}
+{"command": "chroot /mnt ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot /mnt echo reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot --userspec 0:0 / echo reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot /mnt", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "chroot --help", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "nsenter -t 1 ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -t 1 echo reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter --target 1 echo reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -t 1", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -w/ns ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "systemd-run --scope ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --unit=myunit echo hi", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run -p Foo=bar ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --on-calendar daily echo hi", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --scope echo reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --description reboot echo hi", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "systemd-run --unit reboot echo hi", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "systemd-run"}
+{"command": "chroot /mnt sh -c 'echo hi'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "nsenter -t 1 sh -c 'echo hi'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "chroot /mnt python3 -c 'import os; os.system(\"echo hi\")'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "timeout 5 sh -c 'echo hi'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "5"}
+{"command": "nsenter -t 1 r\\m --help", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -t 1 l\\s -l", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "coproc l\\s -l", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "coproc"}
+{"command": "chroot /mnt l\\s", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "chroot"}
+{"command": "nsenter -t 1 echo hi", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "nsenter -t 1 echo r\\m -rf /", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "nsenter"}
+{"command": "unshare -f ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --mount echo reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -r echo hi", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -R /mnt ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --propagation slave ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --map-user 0 ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --setuid 0 echo reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --kill-child ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare -f", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --help", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "unshare --mount=/ns ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "setpriv --reuid 0 ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --reuid 0 echo reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --nnp ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --groups 0 ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --dump", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv -d", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv --dump reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "setpriv -d reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "runuser -u root ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser -u root echo reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser -u root", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser --user root echo hi", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser -c 'echo hi'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser --command 'echo hi'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser --session-command 'echo hi'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser root ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser root reboot", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser - root", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser -l root", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "runuser --login root", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "unshare --map-user reboot ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "setpriv --reuid reboot ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "runuser -u reboot ls", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "unshare -f sh -c 'echo hi'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "unshare"}
+{"command": "setpriv --reuid 0 sh -c 'echo hi'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "setpriv"}
+{"command": "runuser -u root sh -c 'echo hi'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "runuser"}
+{"command": "env -S 'ls -la'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'echo reboot'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'grep -r reboot /etc'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'bash -c \"echo hi\"'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'python3 -c \"print(1)\"'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'bash -c \"echo a; echo b\"'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env --split-string 'ls -la'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "--split-string"}
+{"command": "env --split-string 'echo hi'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "--split-string"}
+{"command": "env -S 'setpriv --dump'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'command -v reboot'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S 'sudo -l'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S ''", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -S", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-s"}
+{"command": "env -iS 'ls -la'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "-is"}
+{"command": "python3 -c \"import os; cmd='ls -la'; os.system(cmd)\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "cmd='ls /tmp'; python3 -c \"import os; os.system('$cmd')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cmd='ls"}
+{"command": "python3 -c \"import subprocess; cmd=['ls', '-la']; subprocess.run(cmd)\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "perl -e 'system \"ls -la\"'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "node -e \"const {execSync}=require('child_process'); execSync('ls -la')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "python3 -c \"import os,sys; os.system(sys.argv[1])\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import os; os.system(os.environ['X'])\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import os; cmd='echo hi'; os.system(cmd + ' there')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import os; os.system('echo $HOME')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "echo 'rm -rf /' | xargs", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo 'shutdown -h now' | xargs", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "printf 'rm -rf /\\n' | xargs", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "printf"}
+{"command": "echo /tmp/build | xargs rm -rf", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo hello | xargs rm -rf", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo / | xargs echo", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo / | xargs rm", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo 'hello world' | xargs -n1 echo", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo / | xargs -I{} echo {}", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "echo 'rm -rf /' | xargs -I{} echo hi", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "printf '/\\n' | xargs -0 rm -rf", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "printf"}
+{"command": "tgt='/tmp/build'; echo $tgt | xargs rm -rf", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "tgt='/tmp/build';"}
+{"command": "tgt='ls'; echo $tgt | xargs sh -c", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "tgt='ls';"}
+{"command": "find . -name '*.tmp' | xargs rm -rf", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "find"}
+{"command": "ls | xargs rm -rf", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ls"}
+{"command": "cat list.txt | xargs rm -rf", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "xargs -a list.txt rm -rf", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "xargs"}
+{"command": "echo $target | xargs rm -rf", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "echo"}
+{"command": "python3 -c \"import shutil; p = '/tmp/build'; shutil.rmtree(p)\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; shutil.rmtree(path='/tmp/build')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; shutil.rmtree('/tmp/a'); shutil.rmtree('/tmp/b')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "perl -e 'use File::Path qw(rmtree); $d = \"/tmp/build\"; rmtree($d)'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "perl"}
+{"command": "ruby -e 'require \"fileutils\"; d = \"/tmp/build\"; FileUtils.rm_rf(d)'", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "ruby"}
+{"command": "node -e \"const fs = require('fs'); const d = '/tmp/build'; fs.rmSync(d, {recursive: true})\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"require('fs').rmSync('/tmp/build', {recursive: true})\",node -e \"const fs = require('fs'); fs.rmSync(d)\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"const fs = require('fs'); fs.rmSync('/')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "python3 -c \"import shutil, os; shutil.rmtree(os.path.join('/tmp', 'build'))\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree; rmtree('/tmp/build')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree as rt; rt('/tmp/build')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil as sh; sh.rmtree('/tmp/build')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree; p = '/tmp/build'; rmtree(p)\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"from shutil import rmtree; rmtree(path='/tmp/build')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"def rmtree(x): pass; rmtree('/')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; getattr(shutil, 'rmtree')('/tmp/build')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; getattr(shutil, 'copy')('/')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; name = 'copy'; getattr(shutil, name)('/')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; shutil.rmtree(ignore_errors=True, path='/tmp/build')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil; p = '/tmp/build'; shutil.rmtree(ignore_errors=True, path=p)\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "python3 -c \"import shutil, os; shutil.rmtree(os.path.join('/tmp', 'build'), ignore_errors=True)\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "python3"}
+{"command": "node -e \"const {rmSync} = require('fs'); rmSync('/tmp/build', {recursive: true})\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"const {rmSync} = require('fs'); rmSync('/', {})\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"const {rmSync} = require('fs').promises; rmSync('/', {recursive: true})\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"const {rmSync} = require('other'); rmSync('/', {recursive: true})\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "node -e \"const {readFileSync} = require('fs'); readFileSync('/')\"", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "node"}
+{"command": "cat <<A | head -1\nshutdown\nA\nxargs -I{} sh -c '{}' <<B\necho hi\nB", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "xargs -I{} sh -c '{}' <<A <<B\nshutdown\nA\necho hi\nB", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "xargs"}
+{"command": "xargs -I{} sh -c '{}' <<B <<< 'echo hi'\nshutdown\nB", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "xargs"}
+{"command": "bash <<B\necho hi\nB\ncat <<A | xargs -I{} sh -c '{}'\necho hi\nA", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "bash"}
+{"command": "cat <<A | head -1\nhello\nA\nxargs -I{} rm -rf {} <<B\n/tmp/ok\nB", "label": 0, "source": "tests/test_server.py parametrized test_dangerous_blocked* / test_benign*", "family": "cat"}
+{"command": "echo hi", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "echo"}
+{"command": "echo ok", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "echo"}
+{"command": "echo oops >&2; exit 3", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "echo"}
+{"command": "sleep 30", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "sleep"}
+{"command": "python3 -c \"print('x' * 100000)\"", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "python3"}
+{"command": "pwd", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "pwd"}
+{"command": "echo one", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "echo"}
+{"command": "exit 7", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "exit"}
+{"command": "echo a\necho b", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "echo"}
+{"command": "echo first", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "echo"}
+{"command": "echo second", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "echo"}
+{"command": "echo two", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "echo"}
+{"command": "rm -rf *", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "rm"}
+{"command": "echo again", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "echo"}
+{"command": "rm -rf $'*'", "label": 0, "source": "tests/test_server.py literal /exec (labeled by server.check_dangerous, cwd=None)", "family": "rm"}
+{"command": "ls ~", "label": 0, "source": "README.md example (labeled by server.check_dangerous, cwd=None)", "family": "ls"}
+{"command": "ls -la", "label": 0, "source": "app/index.html DEFAULT_QUICK (labeled by server.check_dangerous, cwd=None)", "family": "ls"}
+{"command": "whoami", "label": 0, "source": "app/index.html DEFAULT_QUICK (labeled by server.check_dangerous, cwd=None)", "family": "whoami"}
+{"command": "uptime", "label": 0, "source": "app/index.html DEFAULT_QUICK (labeled by server.check_dangerous, cwd=None)", "family": "uptime"}
+{"command": "free -h", "label": 0, "source": "app/index.html DEFAULT_QUICK (labeled by server.check_dangerous, cwd=None)", "family": "free"}
