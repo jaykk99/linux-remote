@@ -48,7 +48,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.23.0"
+VERSION = "1.24.0"
 
 
 # ---------------------------------------------------------------------------
@@ -5236,6 +5236,78 @@ def stats(request: Request, x_api_key: str = Header(default=""), n: int = 500):
     with LOG_FILE.open() as f:
         lines = f.readlines()
     return compute_stats(lines[-n:])
+
+
+def _read_meminfo() -> Optional[dict]:
+    """Memory totals from /proc/meminfo (Linux only); None elsewhere.
+
+    Returns total and available bytes, or None when the file is
+    missing or unreadable (non-Linux hosts, containers without
+    /proc) or lacks the fields we need.
+    """
+    fields: dict[str, int] = {}
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2 and parts[0].endswith(":"):
+                    try:
+                        fields[parts[0][:-1]] = int(parts[1])
+                    except ValueError:
+                        continue
+    except OSError:
+        return None
+    if "MemTotal" not in fields or "MemAvailable" not in fields:
+        return None
+    return {
+        "total_bytes": fields["MemTotal"] * 1024,
+        "available_bytes": fields["MemAvailable"] * 1024,
+    }
+
+
+@app.get("/system")
+def system_info(request: Request, x_api_key: str = Header(default="")):
+    """Read-only host snapshot: load, memory, disk. Auth required.
+
+    Disk figures are for the filesystem holding the workdir base, so
+    the phone shows the disk its commands actually write to. Memory
+    is null on hosts without /proc/meminfo; load is null where
+    getloadavg is unavailable. Nothing here runs a command.
+    """
+    require_key(request, x_api_key)
+    try:
+        load1, load5, load15 = os.getloadavg()
+    except OSError:
+        load1 = load5 = load15 = None
+    mem = _read_meminfo()
+    disk = shutil.disk_usage(_base_dir())
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "host": socket.gethostname(),
+        "uptime_s": int(time.time() - STARTED_AT),
+        "cpu_count": os.cpu_count(),
+        "load_1": load1,
+        "load_5": load5,
+        "load_15": load15,
+        "memory": None if mem is None else {
+            "total_bytes": mem["total_bytes"],
+            "available_bytes": mem["available_bytes"],
+            "used_pct": (
+                round(100 * (1 - mem["available_bytes"] / mem["total_bytes"]), 1)
+                if mem["total_bytes"] else None
+            ),
+        },
+        "disk": {
+            "total_bytes": disk.total,
+            "free_bytes": disk.free,
+            "used_pct": (
+                round(100 * (1 - disk.free / disk.total), 1)
+                if disk.total else None
+            ),
+        },
+    }
 
 
 if __name__ == "__main__":

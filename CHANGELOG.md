@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.24.0 — 2026-11-14
+- New `GET /system` endpoint (auth required, read-only): load averages, CPU count, memory from /proc/meminfo, and disk usage of the workdir filesystem; the phone app shows load, memory used, and free disk as cards in the activity view. Memory/load report null where the host has no /proc/meminfo or getloadavg.
+
 ## 1.23.0 — 2026-11-12
 - Heredoc input to xargs attributed by operator position (bodies follow their operators in source order; the last redirect wins on a stage), so a power command or wipe target fed to xargs from a heredoc is caught however many heredocs the command has; a dangerous body belonging to another stage's heredoc stays allowed, and a `-d` value that does not decode to exactly one char is verified refused by xargs itself, not a bypass.
 

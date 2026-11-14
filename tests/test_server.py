@@ -618,7 +618,7 @@ def test_health_reports_max_concurrent(client, monkeypatch):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json()["max_concurrent"] == 4
-    assert r.json()["version"] == "1.23.0"
+    assert r.json()["version"] == server.VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -2273,3 +2273,62 @@ def test_benign_still_allowed_v122(client, command):
 )
 def test_benign_still_allowed_v123(client, command):
     assert server.check_dangerous(command) is None, command
+
+
+# ---------------------------------------------------------------------------
+# /system (v1.24.0)
+# ---------------------------------------------------------------------------
+
+def test_system_requires_auth(client):
+    r = client.get("/system")
+    assert r.status_code == 401
+    r = client.get("/system", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_system_snapshot(client, tmp_home):
+    r = client.get("/system", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert isinstance(body["host"], str) and body["host"]
+    assert isinstance(body["uptime_s"], int) and body["uptime_s"] >= 0
+    assert isinstance(body["cpu_count"], int) and body["cpu_count"] >= 1
+    # Load is a float trio on Linux, null where getloadavg is absent.
+    assert body["load_1"] is None or isinstance(body["load_1"], float)
+    assert body["load_5"] is None or isinstance(body["load_5"], float)
+    assert body["load_15"] is None or isinstance(body["load_15"], float)
+    # Memory comes from /proc/meminfo on this Linux box.
+    mem = body["memory"]
+    assert mem is not None
+    assert mem["total_bytes"] > 0
+    assert 0 <= mem["available_bytes"] <= mem["total_bytes"]
+    assert 0.0 <= mem["used_pct"] <= 100.0
+    # Disk figures are for the filesystem holding the workdir base.
+    disk = body["disk"]
+    assert disk["total_bytes"] > 0
+    assert 0 <= disk["free_bytes"] <= disk["total_bytes"]
+    assert 0.0 <= disk["used_pct"] <= 100.0
+
+
+def test_system_meminfo_missing_yields_null_memory(client, monkeypatch):
+    monkeypatch.setattr(server, "_read_meminfo", lambda: None)
+    r = client.get("/system", headers=auth())
+    assert r.status_code == 200
+    assert r.json()["memory"] is None
+    # Disk and load still report.
+    assert r.json()["disk"]["total_bytes"] > 0
+
+
+def test_system_load_unavailable_yields_null_load(client, monkeypatch):
+    def _no_loadavg():
+        raise OSError("no loadavg here")
+    monkeypatch.setattr(server.os, "getloadavg", _no_loadavg)
+    r = client.get("/system", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["load_1"] is None
+    assert body["load_5"] is None
+    assert body["load_15"] is None

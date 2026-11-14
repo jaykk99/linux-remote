@@ -1020,6 +1020,14 @@ function statCard(value, label) {
   return d;
 }
 
+function fmtBytes(n) {
+  if (n == null || isNaN(n)) return "n/a";
+  const units = ["B", "K", "M", "G", "T"];
+  let v = n, u = 0;
+  while (v >= 1024 && u < units.length - 1) { v /= 1024; u++; }
+  return (u === 0 ? Math.round(v) : v.toFixed(v >= 100 ? 0 : 1)) + units[u];
+}
+
 // Summary analytics strip at the top of the activity view.
 async function loadActStats() {
   const box = $("actstats");
@@ -1044,6 +1052,20 @@ async function loadActStats() {
     box.appendChild(statCard(String(s.blocked), "blocked"));
     box.appendChild(statCard(top, "top cmd"));
   } catch (e) { /* stats are best-effort; the list below still loads */ }
+  // Host snapshot from /system, same strip. Best-effort too: older
+  // servers (no /system yet) just show the stats cards above.
+  try {
+    const r = await fetch(base + "/system", { headers: { "X-API-Key": key } });
+    if (!r.ok) return;
+    const s = await r.json();
+    if (!s || s.ok !== true) return;
+    if (typeof s.load_1 === "number")
+      box.appendChild(statCard(s.load_1.toFixed(2), "load 1m"));
+    if (s.memory && typeof s.memory.used_pct === "number")
+      box.appendChild(statCard(s.memory.used_pct + "%", "mem used"));
+    if (s.disk && typeof s.disk.free_bytes === "number")
+      box.appendChild(statCard(fmtBytes(s.disk.free_bytes) + " free", "disk"));
+  } catch (e) { /* system cards are best-effort */ }
 }
 
 async function openActivity() {
