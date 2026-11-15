@@ -1,15 +1,15 @@
 {
-  "test_acc": 0.6889,
-  "auc": 0.7061,
+  "test_acc": 0.75,
+  "auc": 0.7644,
   "confusion": {
-    "tp": 86,
-    "fp": 17,
-    "tn": 38,
-    "fn": 39
+    "tp": 98,
+    "fp": 18,
+    "tn": 37,
+    "fn": 27
   },
   "per_class_recall": {
-    "blocked": 0.688,
-    "allowed": 0.6909
+    "blocked": 0.784,
+    "allowed": 0.6727
   },
-  "exp_id": "exp-0001"
+  "exp_id": "exp-0019"
 }
