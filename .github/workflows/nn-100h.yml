@@ -1,0 +1,66 @@
+# nn-100h: 100-hour neural network training, linux-remote.
+#
+# Runs 5.5h chunks (under GitHub Actions' 6h job cap) of
+# nn-100h/train.py, commits checkpoints back to this branch, and
+# self-chains the next run until nn-100h/status.json reaches 100h.
+# Public repo, so Actions minutes are free. Pure Python stdlib,
+# real data only, no manual restarts.
+name: nn-100h linux-remote
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_run_hours:
+        description: 'Max hours for this chunk'
+        required: false
+        default: '5.5'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Train chunk
+        run: cd nn-100h && python3 train.py --resume --max-run-hours ${{ inputs.max_run_hours }}
+
+      - name: Commit checkpoints
+        run: |
+          git config user.name "nn-100h"
+          git config user.email "nn-100h@users.noreply.github.com"
+          # Rebase onto any commits pushed mid-run (e.g. a grid fix),
+          # so the push below does not get rejected as non-fast-forward.
+          # --autostash is required: the trainer always leaves
+          # nn-100h/status.json etc. modified (tracked files), and a
+          # plain pull --rebase refuses a dirty tree with exit 128
+          # (this stalled run 43652137164 after a full 5.5h chunk).
+          git pull --rebase --autostash origin ${{ github.ref_name }}
+          git add nn-100h/
+          HOURS=$(python3 -c "import json; print(round(json.load(open('nn-100h/status.json'))['hours_trained'], 2))")
+          git diff --cached --quiet || git commit -m "nn-100h: checkpoint ${HOURS}h cumulative"
+          git push origin ${{ github.ref_name }}
+
+      - name: Chain next chunk
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DONE=$(python3 -c "import json; print(json.load(open('nn-100h/status.json'))['status'])")
+          if [ "$DONE" = "done" ]; then
+            echo "100h reached, not chaining"
+          else
+            gh workflow run nn-100h.yml --ref ${{ github.ref_name }}
+            echo "chained next run"
+          fi
