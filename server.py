@@ -43,12 +43,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Iterator, Optional
 
+try:
+    import pwd
+except ImportError:  # non-Unix hosts have no pwd module
+    pwd = None  # type: ignore[assignment]
+
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.24.0"
+VERSION = "1.25.0"
 
 
 # ---------------------------------------------------------------------------
@@ -5307,6 +5312,135 @@ def system_info(request: Request, x_api_key: str = Header(default="")):
                 if disk.total else None
             ),
         },
+    }
+
+
+def _uid_to_name(uid: Optional[int]) -> str:
+    """Username for a uid, the uid itself when unknown, "" when absent."""
+    if uid is None:
+        return ""
+    if pwd is not None:
+        try:
+            return pwd.getpwuid(uid).pw_name
+        except KeyError:
+            pass
+    return str(uid)
+
+
+# /proc location, overridable in tests with a fake proc tree.
+PROC_DIR = "/proc"
+
+
+def _read_processes() -> list[dict]:
+    """One snapshot row per process, from /proc (Linux only).
+
+    Each row: pid, user, name (comm), cmd (full command line; kernel
+    threads, which have an empty cmdline, fall back to the comm name),
+    state, cpu_seconds (user + system time since the process started),
+    mem_bytes (resident set). A process that exits mid-read, or a
+    malformed /proc entry, is skipped; a missing /proc yields an
+    empty list. Nothing here runs a command, and no process is ever
+    signalled.
+    """
+    try:
+        clock_ticks = os.sysconf("SC_CLK_TCK")
+    except (ValueError, OSError, AttributeError):
+        clock_ticks = 100
+    try:
+        page_size = os.sysconf("SC_PAGE_SIZE")
+    except (ValueError, OSError, AttributeError):
+        page_size = 4096
+    rows: list[dict] = []
+    try:
+        entries = os.listdir(PROC_DIR)
+    except OSError:
+        return []
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        try:
+            with open(os.path.join(PROC_DIR, entry, "stat")) as f:
+                stat = f.read()
+        except OSError:
+            continue
+        # comm sits in parens and may itself contain spaces or parens,
+        # so split at the last ")" and count fields from there:
+        # state(0) ppid(1) pgrp(2) session(3) tty_nr(4) tpgid(5)
+        # flags(6) minflt(7) cminflt(8) majflt(9) cmajflt(10)
+        # utime(11) stime(12) cutime(13) cstime(14) priority(15)
+        # nice(16) num_threads(17) itrealvalue(18) starttime(19)
+        # vsize(20) rss(21).
+        try:
+            close = stat.rindex(")")
+            name = stat[stat.index("(") + 1:close]
+            fields = stat[close + 2:].split()
+            state = fields[0]
+            utime = int(fields[11])
+            stime = int(fields[12])
+            rss_pages = int(fields[21])
+        except (ValueError, IndexError):
+            continue
+        uid: Optional[int] = None
+        try:
+            with open(os.path.join(PROC_DIR, entry, "status")) as f:
+                for line in f:
+                    if line.startswith("Uid:"):
+                        uid = int(line.split()[1])
+                        break
+        except (OSError, ValueError, IndexError):
+            uid = None
+        try:
+            with open(os.path.join(PROC_DIR, entry, "cmdline"), "rb") as f:
+                raw = f.read()
+            cmd = raw.replace(b"\0", b" ").decode("utf-8", "replace").strip()
+        except OSError:
+            cmd = ""
+        if not cmd:
+            cmd = name
+        rows.append({
+            "pid": pid,
+            "user": _uid_to_name(uid),
+            "name": name,
+            "cmd": cmd[:200],
+            "state": state,
+            "cpu_seconds": round((utime + stime) / clock_ticks, 2),
+            "mem_bytes": rss_pages * page_size,
+        })
+    return rows
+
+
+@app.get("/processes")
+def processes(
+    request: Request,
+    x_api_key: str = Header(default=""),
+    n: int = 20,
+    sort: str = "cpu",
+):
+    """Top processes by CPU time (or memory). Auth required, read-only.
+
+    `n` clamps to 1..100 (default 20); `sort` is "cpu" (user + system
+    seconds since the process started, default) or "mem" (resident
+    bytes). Reads /proc directly, runs no command, and returns an
+    empty list on hosts without /proc.
+    """
+    require_key(request, x_api_key)
+    if sort not in ("cpu", "mem"):
+        raise HTTPException(
+            status_code=400, detail="sort must be 'cpu' or 'mem'"
+        )
+    n = max(1, min(n, 100))
+    rows = _read_processes()
+    key = "cpu_seconds" if sort == "cpu" else "mem_bytes"
+    rows.sort(key=lambda r: r[key], reverse=True)
+    top = rows[:n]
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "sort": sort,
+        "count": len(top),
+        "processes": top,
     }
 
 

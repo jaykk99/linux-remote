@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.25.0 — 2026-11-15
+- New `GET /processes` endpoint (auth required, read-only): top processes by CPU time (`sort=cpu`, default) or resident memory (`sort=mem`), `n` clamped to 1..100; each row has pid, user, name, full command line, state, cpu_seconds, and mem_bytes, read straight from /proc (empty list where /proc is absent). The phone app lists the top 5 in the activity view.
+
 ## 1.24.0 — 2026-11-14
 - New `GET /system` endpoint (auth required, read-only): load averages, CPU count, memory from /proc/meminfo, and disk usage of the workdir filesystem; the phone app shows load, memory used, and free disk as cards in the activity view. Memory/load report null where the host has no /proc/meminfo or getloadavg.
 

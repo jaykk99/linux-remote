@@ -85,6 +85,12 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   base. Memory is null on hosts without `/proc/meminfo`; load is null
   where `getloadavg` is unavailable. The phone app shows load, memory
   used, and free disk as cards in the activity view.
+- `GET /processes?n=20&sort=cpu` - header `X-API-Key: <key>`, read-only
+  top processes by CPU time (`sort=cpu`, default) or resident memory
+  (`sort=mem`); `n` clamps to 1..100. Each row has pid, user, name,
+  full command line, state, cpu_seconds, and mem_bytes, read straight
+  from `/proc` (empty list on hosts without `/proc`). The phone app
+  lists the top 5 in the activity view.
 
 ## Configuration (env vars)
 

@@ -2332,3 +2332,144 @@ def test_system_load_unavailable_yields_null_load(client, monkeypatch):
     assert body["load_1"] is None
     assert body["load_5"] is None
     assert body["load_15"] is None
+
+
+# /processes (v1.25.0)
+# ---------------------------------------------------------------------------
+
+def _fake_proc(tmp_path, procs):
+    """Build a fake /proc tree. Each proc: pid, name, state, utime,
+    stime (ticks), rss_pages, uid, cmd (str, NUL-joined when bytes)."""
+    root = tmp_path / "proc"
+    for p in procs:
+        d = root / str(p["pid"])
+        d.mkdir(parents=True)
+        # Fields after "(comm)": state ppid pgrp session tty_nr tpgid
+        # flags minflt cminflt majflt cmajflt utime stime cutime cstime
+        # priority nice num_threads itrealvalue starttime vsize rss.
+        fields = [
+            p.get("state", "R"), "1", "1", "1", "0", "-1", "4194304",
+            "100", "0", "0", "0",
+            str(p.get("utime", 0)), str(p.get("stime", 0)),
+            "0", "0", "20", "0", "1", "0", "0",
+            "1000000", str(p.get("rss_pages", 0)),
+        ]
+        (d / "stat").write_text(
+            f"{p['pid']} ({p['name']}) " + " ".join(fields) + "\n"
+        )
+        (d / "status").write_text(
+            f"Name:\t{p['name']}\nUid:\t{p.get('uid', 0)}\t0\t0\t0\n"
+        )
+        cmd = p.get("cmd", "")
+        (d / "cmdline").write_bytes(
+            cmd.encode() if isinstance(cmd, str) else cmd
+        )
+    return root
+
+
+def test_processes_requires_auth(client):
+    r = client.get("/processes")
+    assert r.status_code == 401
+    r = client.get("/processes", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_processes_snapshot(client):
+    r = client.get("/processes?n=100", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert body["sort"] == "cpu"
+    assert body["count"] == len(body["processes"])
+    assert body["count"] >= 1
+    # This test process itself runs on the box, so it is listed.
+    assert os.getpid() in [p["pid"] for p in body["processes"]]
+    cpus = [p["cpu_seconds"] for p in body["processes"]]
+    assert cpus == sorted(cpus, reverse=True)
+    for p in body["processes"]:
+        assert isinstance(p["pid"], int) and p["pid"] > 0
+        assert isinstance(p["user"], str)
+        assert isinstance(p["name"], str) and p["name"]
+        assert isinstance(p["cmd"], str) and p["cmd"]
+        assert isinstance(p["state"], str) and len(p["state"]) == 1
+        assert isinstance(p["cpu_seconds"], (int, float))
+        assert p["cpu_seconds"] >= 0
+        assert isinstance(p["mem_bytes"], int) and p["mem_bytes"] >= 0
+
+
+def test_processes_fake_proc_cpu_and_mem_sort(client, tmp_path, monkeypatch):
+    root = _fake_proc(tmp_path, [
+        {"pid": 100, "name": "python3", "utime": 500, "stime": 200,
+         "rss_pages": 250, "uid": 0, "cmd": "python3 app.py"},
+        {"pid": 200, "name": "sleep", "utime": 100, "stime": 0,
+         "rss_pages": 2000, "uid": 0, "cmd": ""},
+        {"pid": 300, "name": "weird (name)", "utime": 10, "stime": 0,
+         "rss_pages": 10, "uid": 0, "cmd": "x" * 300},
+    ])
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/processes", headers=auth())
+    assert r.status_code == 200
+    procs = r.json()["processes"]
+    assert [p["pid"] for p in procs] == [100, 200, 300]
+    by_pid = {p["pid"]: p for p in procs}
+    ticks = os.sysconf("SC_CLK_TCK")
+    page = os.sysconf("SC_PAGE_SIZE")
+    assert by_pid[100]["cpu_seconds"] == round(700 / ticks, 2)
+    assert by_pid[100]["mem_bytes"] == 250 * page
+    assert by_pid[100]["user"] == "root"
+    assert by_pid[100]["cmd"] == "python3 app.py"
+    # Empty cmdline (kernel-style) falls back to the comm name.
+    assert by_pid[200]["cmd"] == "sleep"
+    # A comm containing parens still parses; long cmdlines truncate.
+    assert by_pid[300]["name"] == "weird (name)"
+    assert len(by_pid[300]["cmd"]) == 200
+    # Memory sort flips the order.
+    r = client.get("/processes?sort=mem", headers=auth())
+    assert [p["pid"] for p in r.json()["processes"]] == [200, 100, 300]
+
+
+def test_processes_skips_malformed_and_nonnumeric(
+    client, tmp_path, monkeypatch
+):
+    root = _fake_proc(tmp_path, [
+        {"pid": 100, "name": "ok", "utime": 10, "stime": 0,
+         "rss_pages": 5, "uid": 0, "cmd": "ok"},
+    ])
+    (root / "self").mkdir(exist_ok=True)
+    bad = root / "400"
+    bad.mkdir()
+    (bad / "stat").write_text("not a stat line\n")
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/processes", headers=auth())
+    assert r.status_code == 200
+    assert [p["pid"] for p in r.json()["processes"]] == [100]
+
+
+def test_processes_n_clamps_and_sort_validates(
+    client, tmp_path, monkeypatch
+):
+    root = _fake_proc(tmp_path, [
+        {"pid": i, "name": f"p{i}", "utime": i, "stime": 0,
+         "rss_pages": 1, "uid": 0, "cmd": f"p{i}"}
+        for i in range(1, 106)
+    ])
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/processes?n=5000", headers=auth())
+    assert r.status_code == 200
+    assert r.json()["count"] == 100  # capped at 100
+    r = client.get("/processes?n=0", headers=auth())
+    assert r.status_code == 200
+    assert r.json()["count"] == 1  # clamped up to 1
+    r = client.get("/processes?sort=bogus", headers=auth())
+    assert r.status_code == 400
+
+
+def test_processes_no_proc_yields_empty(client, monkeypatch):
+    monkeypatch.setattr(server, "PROC_DIR", "/nonexistent-proc-dir")
+    r = client.get("/processes", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["processes"] == []
+    assert body["count"] == 0

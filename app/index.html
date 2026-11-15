@@ -414,6 +414,14 @@
     padding: 2px 16px 12px; scrollbar-width: none;
   }
   #actstats::-webkit-scrollbar { display: none; }
+  #actprocs {
+    flex-shrink: 0; padding: 0 16px 12px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  #actprocs .label {
+    font-size: 11px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 1.4px; color: var(--text3);
+  }
   .statcard {
     flex: 1 0 auto; min-width: 88px; background: var(--surface);
     border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px;
@@ -549,6 +557,7 @@
       <button id="actclose" class="ghost" style="min-height:0; padding:8px 14px;">Close</button>
     </div>
     <div id="actstats"></div>
+    <div id="actprocs"></div>
     <div id="actlist"></div>
   </div>
 
@@ -1072,6 +1081,7 @@ async function openActivity() {
   const ov = $("activity");
   ov.classList.add("open");
   loadActStats();
+  loadActProcesses();
   const list = $("actlist");
   list.innerHTML = '<div class="hint" style="margin-top:24px;">Loading…</div>';
   const base = baseUrl(), key = keyEl.value.trim();
@@ -1095,6 +1105,40 @@ async function openActivity() {
   } catch (e) {
     list.innerHTML = '<div class="hint" style="margin-top:24px;">Request failed.</div>';
   }
+}
+
+// Top processes from /processes, under the stats strip. Best-effort:
+// older servers (no /processes yet) just show nothing here.
+async function loadActProcesses() {
+  const box = $("actprocs");
+  box.innerHTML = "";
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) return;
+  try {
+    const r = await fetch(base + "/processes?n=5", { headers: { "X-API-Key": key } });
+    if (!r.ok) return;
+    const d = await r.json();
+    const procs = (d && d.processes) || [];
+    if (!procs.length) return;
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = "Top processes";
+    box.appendChild(label);
+    procs.forEach(p => {
+      const card = document.createElement("div");
+      card.className = "actcard";
+      const cmd = document.createElement("div");
+      cmd.className = "acmd";
+      cmd.textContent = p.cmd || p.name;
+      const meta = document.createElement("div");
+      meta.className = "ameta";
+      meta.textContent = p.user + " · pid " + p.pid + " · cpu "
+        + p.cpu_seconds + "s · " + fmtBytes(p.mem_bytes);
+      card.appendChild(cmd);
+      card.appendChild(meta);
+      box.appendChild(card);
+    });
+  } catch (e) { /* processes are best-effort */ }
 }
 
 function activityCard(line) {
