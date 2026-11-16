@@ -1,25 +1,25 @@
 {
-  "exp_id": "exp-0308",
+  "exp_id": "exp-0529",
   "config": {
     "hidden": [
       16,
       8
     ],
     "lr": 0.1,
-    "l2": 0.0001,
+    "l2": 1e-05,
     "epochs": 240,
-    "seed": 165
+    "seed": 386
   },
-  "test_acc": 0.8278,
-  "auc": 0.822,
+  "test_acc": 0.8389,
+  "auc": 0.8293,
   "confusion": {
-    "tp": 112,
-    "fp": 18,
-    "tn": 37,
-    "fn": 13
+    "tp": 117,
+    "fp": 21,
+    "tn": 34,
+    "fn": 8
   },
   "per_class_recall": {
-    "blocked": 0.896,
-    "allowed": 0.6727
+    "blocked": 0.936,
+    "allowed": 0.6182
   }
 }
