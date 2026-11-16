@@ -414,11 +414,11 @@
     padding: 2px 16px 12px; scrollbar-width: none;
   }
   #actstats::-webkit-scrollbar { display: none; }
-  #actprocs {
+  #actprocs, #actnet {
     flex-shrink: 0; padding: 0 16px 12px;
     display: flex; flex-direction: column; gap: 8px;
   }
-  #actprocs .label {
+  #actprocs .label, #actnet .label {
     font-size: 11px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 1.4px; color: var(--text3);
   }
@@ -558,6 +558,7 @@
     </div>
     <div id="actstats"></div>
     <div id="actprocs"></div>
+    <div id="actnet"></div>
     <div id="actlist"></div>
   </div>
 
@@ -1082,6 +1083,7 @@ async function openActivity() {
   ov.classList.add("open");
   loadActStats();
   loadActProcesses();
+  loadActNetwork();
   const list = $("actlist");
   list.innerHTML = '<div class="hint" style="margin-top:24px;">Loading…</div>';
   const base = baseUrl(), key = keyEl.value.trim();
@@ -1139,6 +1141,42 @@ async function loadActProcesses() {
       box.appendChild(card);
     });
   } catch (e) { /* processes are best-effort */ }
+}
+
+// Network interfaces from /network, under the processes list.
+// Best-effort: older servers (no /network yet) just show nothing.
+async function loadActNetwork() {
+  const box = $("actnet");
+  box.innerHTML = "";
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) return;
+  try {
+    const r = await fetch(base + "/network", { headers: { "X-API-Key": key } });
+    if (!r.ok) return;
+    const d = await r.json();
+    const ifaces = (d && d.interfaces) || [];
+    if (!ifaces.length) return;
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = "Network";
+    box.appendChild(label);
+    ifaces.forEach(n => {
+      const card = document.createElement("div");
+      card.className = "actcard";
+      const name = document.createElement("div");
+      name.className = "acmd";
+      name.textContent = n.name + (n.ipv4 ? " · " + n.ipv4 : "")
+        + (d.gateway_iface === n.name ? " · gateway" : "");
+      const meta = document.createElement("div");
+      meta.className = "ameta";
+      meta.textContent = "↓ " + fmtBytes(n.rx_bytes) + " · ↑ "
+        + fmtBytes(n.tx_bytes)
+        + (n.mac ? " · " + n.mac : "");
+      card.appendChild(name);
+      card.appendChild(meta);
+      box.appendChild(card);
+    });
+  } catch (e) { /* network is best-effort */ }
 }
 
 function activityCard(line) {

@@ -36,6 +36,7 @@ import select
 import shlex
 import shutil
 import socket
+import struct
 import subprocess
 import threading
 import time
@@ -48,12 +49,17 @@ try:
 except ImportError:  # non-Unix hosts have no pwd module
     pwd = None  # type: ignore[assignment]
 
+try:
+    import fcntl
+except ImportError:  # non-Unix hosts have no fcntl module
+    fcntl = None  # type: ignore[assignment]
+
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.25.0"
+VERSION = "1.26.0"
 
 
 # ---------------------------------------------------------------------------
@@ -5441,6 +5447,154 @@ def processes(
         "sort": sort,
         "count": len(top),
         "processes": top,
+    }
+
+
+# /proc/net location, overridable in tests with a fake proc tree.
+PROC_NET_DIR = "/proc/net"
+
+
+def _read_net_dev() -> dict[str, dict[str, int]]:
+    """Per-interface byte/packet counters from /proc/net/dev.
+
+    Returns {name: {rx_bytes, rx_packets, tx_bytes, tx_packets}}.
+    Malformed lines are skipped; a missing file yields {}. Nothing
+    here runs a command.
+    """
+    counters: dict[str, dict[str, int]] = {}
+    try:
+        with open(os.path.join(PROC_NET_DIR, "dev")) as f:
+            lines = f.readlines()
+    except OSError:
+        return {}
+    for line in lines[2:]:  # two header lines
+        if ":" not in line:
+            continue
+        name, rest = line.split(":", 1)
+        name = name.strip()
+        if not name:
+            continue
+        try:
+            fields = [int(x) for x in rest.split()]
+            counters[name] = {
+                "rx_bytes": fields[0],
+                "rx_packets": fields[1],
+                "tx_bytes": fields[8],
+                "tx_packets": fields[9],
+            }
+        except (ValueError, IndexError):
+            continue
+    return counters
+
+
+def _read_default_route() -> tuple[Optional[str], Optional[str]]:
+    """Default gateway (dotted IP) and its interface, from
+    /proc/net/route.
+
+    The gateway hex in /proc/net/route is little-endian. Returns
+    (None, None) when there is no default route or the file is
+    missing or unreadable.
+    """
+    try:
+        with open(os.path.join(PROC_NET_DIR, "route")) as f:
+            lines = f.readlines()
+    except OSError:
+        return None, None
+    for line in lines[1:]:  # one header line
+        parts = line.split()
+        if len(parts) < 3 or parts[1] != "00000000":
+            continue
+        try:
+            raw = struct.pack("<I", int(parts[2], 16))
+            return socket.inet_ntoa(raw), parts[0]
+        except (ValueError, OSError):
+            continue
+    return None, None
+
+
+def _read_iface_addrs() -> dict[str, dict[str, Optional[str]]]:
+    """IPv4 address, netmask, and MAC per interface, via ioctl.
+
+    Uses SIOCGIFADDR / SIOCGIFNETMASK / SIOCGIFHWADDR on each name
+    from socket.if_nameindex(). An interface with no IPv4 address
+    still reports its MAC. Returns {} where ioctls are unavailable
+    (non-Linux hosts) or the lookup fails. Nothing here runs a
+    command.
+    """
+    if fcntl is None:
+        return {}
+    addrs: dict[str, dict[str, Optional[str]]] = {}
+    try:
+        names = [name for _, name in socket.if_nameindex()]
+    except OSError:
+        return {}
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    except OSError:
+        return {}
+    with sock:
+        for name in names:
+            row: dict[str, Optional[str]] = {
+                "ipv4": None, "netmask": None, "mac": None,
+            }
+            packed = struct.pack("256s", name.encode()[:15])
+            for request, key, is_hw in (
+                (0x8915, "ipv4", False),    # SIOCGIFADDR
+                (0x891B, "netmask", False),  # SIOCGIFNETMASK
+                (0x8927, "mac", True),      # SIOCGIFHWADDR
+            ):
+                try:
+                    res = fcntl.ioctl(sock.fileno(), request, packed)
+                except OSError:
+                    continue
+                if is_hw:
+                    row[key] = ":".join(f"{b:02x}" for b in res[18:24])
+                else:
+                    row[key] = socket.inet_ntoa(res[20:24])
+            addrs[name] = row
+    return addrs
+
+
+@app.get("/network")
+def network_info(request: Request, x_api_key: str = Header(default="")):
+    """Network interfaces snapshot. Auth required, read-only.
+
+    Per-interface IPv4 address, netmask, MAC (ioctl), and rx/tx
+    byte/packet counters from /proc/net/dev, plus the default
+    gateway and its interface from /proc/net/route. Addresses are
+    null where an interface has none (or the host has no ioctl);
+    counters are 0 where /proc/net/dev is absent. Nothing here
+    runs a command.
+    """
+    require_key(request, x_api_key)
+    counters = _read_net_dev()
+    addrs = _read_iface_addrs()
+    gateway, gw_iface = _read_default_route()
+    interfaces = []
+    for name in sorted(set(counters) | set(addrs)):
+        c = counters.get(name, {
+            "rx_bytes": 0, "rx_packets": 0,
+            "tx_bytes": 0, "tx_packets": 0,
+        })
+        a = addrs.get(name, {"ipv4": None, "netmask": None, "mac": None})
+        interfaces.append({
+            "name": name,
+            "ipv4": a["ipv4"],
+            "netmask": a["netmask"],
+            "mac": a["mac"],
+            "rx_bytes": c["rx_bytes"],
+            "rx_packets": c["rx_packets"],
+            "tx_bytes": c["tx_bytes"],
+            "tx_packets": c["tx_packets"],
+        })
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "host": socket.gethostname(),
+        "default_gateway": gateway,
+        "gateway_iface": gw_iface,
+        "interfaces": interfaces,
     }
 
 

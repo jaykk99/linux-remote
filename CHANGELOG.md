@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.26.0 — 2026-11-16
+- New `GET /network` endpoint (auth required, read-only): per-interface IPv4 address, netmask, and MAC (ioctl) plus rx/tx byte and packet counters from `/proc/net/dev`, and the default gateway and its interface from `/proc/net/route` (gateway hex decoded little-endian). Addresses are null where an interface has none; counters are 0 and the interface list empty where `/proc/net` is absent. The phone app lists interfaces in the activity view, marking the gateway interface.
+
 ## 1.25.0 — 2026-11-15
 - New `GET /processes` endpoint (auth required, read-only): top processes by CPU time (`sort=cpu`, default) or resident memory (`sort=mem`), `n` clamped to 1..100; each row has pid, user, name, full command line, state, cpu_seconds, and mem_bytes, read straight from /proc (empty list where /proc is absent). The phone app lists the top 5 in the activity view.
 

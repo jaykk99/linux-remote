@@ -91,6 +91,13 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   full command line, state, cpu_seconds, and mem_bytes, read straight
   from `/proc` (empty list on hosts without `/proc`). The phone app
   lists the top 5 in the activity view.
+- `GET /network` - header `X-API-Key: <key>`, read-only network
+  snapshot: per-interface IPv4 address, netmask, and MAC (ioctl) plus
+  rx/tx byte and packet counters from `/proc/net/dev`, and the default
+  gateway and its interface from `/proc/net/route`. Addresses are null
+  where an interface has none; counters are 0 and the list empty on
+  hosts without `/proc/net`. The phone app lists interfaces in the
+  activity view, marking the gateway interface.
 
 ## Configuration (env vars)
 

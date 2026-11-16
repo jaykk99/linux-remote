@@ -2473,3 +2473,141 @@ def test_processes_no_proc_yields_empty(client, monkeypatch):
     body = r.json()
     assert body["processes"] == []
     assert body["count"] == 0
+
+
+# /network (v1.26.0)
+# ---------------------------------------------------------------------------
+
+def _fake_proc_net(tmp_path, dev=None, route=None):
+    """Build a fake /proc/net tree with dev and/or route files."""
+    root = tmp_path / "net"
+    root.mkdir()
+    if dev is not None:
+        (root / "dev").write_text(dev)
+    if route is not None:
+        (root / "route").write_text(route)
+    return root
+
+
+_FAKE_DEV = (
+    "Inter-|   Receive                                                |  Transmit\n"
+    " face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed\n"
+    "    lo: 1234    10    0    0    0     0          0         0     5678      9    0    0    0     0       0          0\n"
+    "  eth0: 100000  500    0    0    0     0          0         0    20000    100    0    0    0     0       0          0\n"
+    "   bad: not numbers here\n"
+)
+
+_FAKE_ROUTE = (
+    "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
+    "eth0\t00000000\t0101A8C0\t0003\t0\t0\t100\t00000000\t0\t0\t0\n"
+    "eth0\t0001A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n"
+)
+
+
+def test_network_requires_auth(client):
+    r = client.get("/network")
+    assert r.status_code == 401
+    r = client.get("/network", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_network_snapshot(client):
+    r = client.get("/network", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert isinstance(body["host"], str) and body["host"]
+    gw = body["default_gateway"]
+    assert gw is None or isinstance(gw, str)
+    assert body["gateway_iface"] is None or isinstance(
+        body["gateway_iface"], str
+    )
+    ifaces = body["interfaces"]
+    assert isinstance(ifaces, list) and len(ifaces) >= 1
+    # Loopback is always present on Linux, with 127.0.0.1.
+    by_name = {i["name"]: i for i in ifaces}
+    assert "lo" in by_name
+    assert by_name["lo"]["ipv4"] == "127.0.0.1"
+    assert by_name["lo"]["netmask"] == "255.0.0.0"
+    assert by_name["lo"]["mac"] == "00:00:00:00:00:00"
+    assert [i["name"] for i in ifaces] == sorted(by_name)
+    for i in ifaces:
+        assert isinstance(i["name"], str) and i["name"]
+        assert i["ipv4"] is None or isinstance(i["ipv4"], str)
+        assert i["netmask"] is None or isinstance(i["netmask"], str)
+        assert i["mac"] is None or isinstance(i["mac"], str)
+        for key in ("rx_bytes", "rx_packets", "tx_bytes", "tx_packets"):
+            assert isinstance(i[key], int) and i[key] >= 0
+
+
+def test_network_iface_addrs_live_lo():
+    # Direct helper check: loopback reports 127.0.0.1 on this box.
+    addrs = server._read_iface_addrs()
+    assert "lo" in addrs
+    assert addrs["lo"]["ipv4"] == "127.0.0.1"
+
+
+def test_network_fake_proc_dev_route_and_merge(
+    client, tmp_path, monkeypatch
+):
+    root = _fake_proc_net(tmp_path, dev=_FAKE_DEV, route=_FAKE_ROUTE)
+    monkeypatch.setattr(server, "PROC_NET_DIR", str(root))
+    monkeypatch.setattr(server, "_read_iface_addrs", lambda: {
+        "lo": {"ipv4": "127.0.0.1", "netmask": "255.0.0.0",
+               "mac": "00:00:00:00:00:00"},
+        "eth0": {"ipv4": "192.168.1.10", "netmask": "255.255.255.0",
+                 "mac": "aa:bb:cc:dd:ee:ff"},
+        # tun0 has addresses but no /proc/net/dev row: counters are 0.
+        "tun0": {"ipv4": None, "netmask": None,
+                 "mac": "00:11:22:33:44:55"},
+    })
+    r = client.get("/network", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    # Gateway hex 0101A8C0 is little-endian 192.168.1.1, via eth0.
+    assert body["default_gateway"] == "192.168.1.1"
+    assert body["gateway_iface"] == "eth0"
+    by_name = {i["name"]: i for i in body["interfaces"]}
+    # Malformed "bad" dev line skipped; tun0 merged in with 0s.
+    assert sorted(by_name) == ["eth0", "lo", "tun0"]
+    lo = by_name["lo"]
+    assert lo["rx_bytes"] == 1234 and lo["rx_packets"] == 10
+    assert lo["tx_bytes"] == 5678 and lo["tx_packets"] == 9
+    eth0 = by_name["eth0"]
+    assert eth0["rx_bytes"] == 100000 and eth0["tx_bytes"] == 20000
+    assert eth0["ipv4"] == "192.168.1.10"
+    assert eth0["mac"] == "aa:bb:cc:dd:ee:ff"
+    tun0 = by_name["tun0"]
+    assert tun0["rx_bytes"] == 0 and tun0["tx_bytes"] == 0
+    assert tun0["ipv4"] is None
+
+
+def test_network_no_default_route_yields_null_gateway(
+    client, tmp_path, monkeypatch
+):
+    # Route table with only a LAN route: no default gateway.
+    root = _fake_proc_net(tmp_path, dev=_FAKE_DEV, route=(
+        "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
+        "eth0\t0001A8C0\t00000000\t0001\t0\t0\t100\t00FFFFFF\t0\t0\t0\n"
+    ))
+    monkeypatch.setattr(server, "PROC_NET_DIR", str(root))
+    r = client.get("/network", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["default_gateway"] is None
+    assert body["gateway_iface"] is None
+
+
+def test_network_no_proc_net_yields_empty(
+    client, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(server, "PROC_NET_DIR", "/nonexistent-proc-net")
+    monkeypatch.setattr(server, "_read_iface_addrs", lambda: {})
+    r = client.get("/network", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["interfaces"] == []
+    assert body["default_gateway"] is None
+    assert body["gateway_iface"] is None
