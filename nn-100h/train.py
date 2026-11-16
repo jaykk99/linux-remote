@@ -506,6 +506,12 @@ class Trainer:
 
     # -- main loop ----------------------------------------------------------
     def run(self):
+        if self.status.get("status") == "done":
+            # Terminal state: touch NOTHING (no status/heartbeat writes),
+            # so the CircleCI commit step finds no changes and the chain
+            # stops instead of looping on empty checkpoint commits.
+            log("already done, nothing to do")
+            return 0
         log(f"start resume={self.resume} max_run_hours="
             f"{self.max_run_seconds / 3600.0} hours_trained_so_far="
             f"{self.base_hours:.3f} experiments_done={self.experiments_done} "
