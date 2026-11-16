@@ -1,0 +1,70 @@
+# nn-100h on CircleCI (Free plan) — linux-remote
+#
+# Mirrors the proven GitHub Actions chain (.github/workflows/nn-100h.yml):
+# train a sub-1h chunk of nn-100h/train.py, commit checkpoints back to
+# this branch, and let the push trigger the next pipeline run. The chain
+# stops on its own when nn-100h/status.json reaches 100h (trainer exits
+# early with "already done" and the commit step finds nothing to push).
+#
+# Free-plan limits this design respects:
+# - 1 hour max per job: the train chunk is 0.75h (45 min), leaving
+#   ~15 min for checkout + commit + push.
+# - 30,000 credits/month = 6,000 build minutes on small Docker
+#   (5 credits/min). One ~50-min job costs ~250 credits.
+# - Pure Python stdlib, no installs, no GPU.
+# - No persist_to_workspace / cache needed: checkpoints ride in git,
+#   exactly like the GHA chain (each job checks out the branch tip).
+#
+# Setup the parent must do in the CircleCI web UI before the first run:
+# 1. Create the project for this repo (GitHub is already connected to
+#    the Monico org via the GitHub App) and build this branch
+#    (feat/nn-100h-linux-remote).
+# 2. Add a GitHub user key (Project Settings -> SSH Keys -> Add User
+#    Key) so the job can push checkpoint commits over SSH. Without it,
+#    checkout is read-only and the commit step fails.
+# 3. Confirm "Build pushes" is on (default) so each checkpoint push
+#    triggers the next run. Do NOT trigger overlapping manual runs:
+#    two jobs pushing at once can fail the push (non-fast-forward)
+#    and break the chain.
+version: 2.1
+
+jobs:
+  train:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Train chunk (45 min max)
+          no_output_timeout: 10m
+          command: |
+            cd nn-100h && python3 train.py --resume --max-run-hours 0.75
+      - run:
+          name: Commit checkpoints (triggers next run)
+          command: |
+            git config user.name "nn-100h"
+            git config user.email "nn-100h@users.noreply.github.com"
+            # Rebase onto any commits pushed mid-run, same autostash fix
+            # as the GHA workflow (the trainer always leaves tracked
+            # nn-100h/status.json etc. modified; a plain pull --rebase
+            # refuses a dirty tree with exit 128).
+            git pull --rebase --autostash origin "$CIRCLE_BRANCH"
+            git add nn-100h/
+            HOURS=$(python3 -c "import json; print(round(json.load(open('nn-100h/status.json'))['hours_trained'], 2))")
+            git diff --cached --quiet || git commit -m "nn-100h: checkpoint ${HOURS}h cumulative [circleci]"
+            git push origin "$CIRCLE_BRANCH"
+      - run:
+          name: Chain status
+          command: |
+            DONE=$(python3 -c "import json; print(json.load(open('nn-100h/status.json'))['status'])")
+            if [ "$DONE" = "done" ]; then
+              echo "100h reached, chain stops (nothing pushed, no next run)"
+            else
+              echo "checkpoint pushed, push triggers the next pipeline run"
+            fi
+
+workflows:
+  nn-100h:
+    jobs:
+      - train
