@@ -1,7 +1,7 @@
 {
   "repo": "jaykk99/linux-remote",
-  "hours_trained": 24.9158,
-  "experiments_done": 1105,
+  "hours_trained": 25.6658,
+  "experiments_done": 1139,
   "best": {
     "exp_id": "exp-0529",
     "config": {
@@ -28,19 +28,19 @@
     }
   },
   "status": "training",
-  "next_exp_num": 1106,
+  "next_exp_num": 1140,
   "grid_index": 144,
-  "refine_index": 962,
-  "current_exp_id": "exp-1106",
+  "refine_index": 996,
+  "current_exp_id": "exp-1140",
   "current_config": {
     "hidden": [
-      8,
-      4
+      16,
+      8
     ],
     "lr": 0.1,
     "l2": 1e-05,
     "epochs": 240,
-    "seed": 963
+    "seed": 997
   },
-  "updated": "2026-11-17T01:56:30"
+  "updated": "2026-11-17T02:41:42"
 }
