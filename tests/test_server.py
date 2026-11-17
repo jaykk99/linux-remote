@@ -2611,3 +2611,134 @@ def test_network_no_proc_net_yields_empty(
     assert body["interfaces"] == []
     assert body["default_gateway"] is None
     assert body["gateway_iface"] is None
+
+
+# /disk (v1.27.0)
+# ---------------------------------------------------------------------------
+
+def _fake_proc_mounts(tmp_path, mounts):
+    """Build a fake /proc tree with a mounts file."""
+    root = tmp_path / "proc"
+    root.mkdir()
+    (root / "mounts").write_text(mounts)
+    return root
+
+
+class _FakeStatvfs:
+    def __init__(self, blocks, bfree, frsize=4096):
+        self.f_blocks = blocks
+        self.f_bfree = bfree
+        self.f_bavail = bfree
+        self.f_frsize = frsize
+        self.f_bsize = frsize
+        self.f_files = 0
+        self.f_ffree = 0
+        self.f_favail = 0
+        self.f_flag = 0
+        self.f_namemax = 255
+
+
+_FAKE_MOUNTS = (
+    "/dev/mapper/rv / ext4 rw,relatime 0 0\n"
+    "/dev/sda1 /boot ext4 rw,relatime 0 0\n"
+    "tmpfs /dev/shm tmpfs rw,nosuid,nodev 0 0\n"
+    "/dev/mapper/rv / ext4 rw,relatime 0 0\n"
+    "/dev/sdb1 /mnt/my\\040disk ext4 rw,relatime 0 0\n"
+    "proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0\n"
+    "badline\n"
+    "/dev/sdc1 /mnt/gone ext4 rw,relatime 0 0\n"
+)
+
+
+def test_disk_requires_auth(client):
+    r = client.get("/disk")
+    assert r.status_code == 401
+    r = client.get("/disk", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_disk_snapshot(client):
+    r = client.get("/disk", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert isinstance(body["host"], str) and body["host"]
+    mounts = body["mounts"]
+    assert isinstance(mounts, list) and len(mounts) >= 1
+    assert body["count"] == len(mounts)
+    # Root is always a mount on Linux.
+    by_mp = {m["mountpoint"]: m for m in mounts}
+    assert "/" in by_mp
+    assert [m["mountpoint"] for m in mounts] == sorted(by_mp)
+    for m in mounts:
+        assert isinstance(m["device"], str) and m["device"]
+        assert isinstance(m["mountpoint"], str) and m["mountpoint"]
+        assert isinstance(m["fstype"], str) and m["fstype"]
+        assert isinstance(m["total_bytes"], int) and m["total_bytes"] > 0
+        assert isinstance(m["free_bytes"], int)
+        assert 0 <= m["free_bytes"] <= m["total_bytes"]
+        assert isinstance(m["used_pct"], (int, float))
+        assert 0.0 <= m["used_pct"] <= 100.0
+
+
+def test_disk_unescape_mount_field():
+    assert server._unescape_mount_field("/mnt/my\\040disk") == "/mnt/my disk"
+    assert server._unescape_mount_field("a\\011b\\012c\\134d") == "a\tb\nc\\d"
+    # A backslash not followed by 3 octal digits is left alone.
+    assert server._unescape_mount_field("a\\xb") == "a\\xb"
+    assert server._unescape_mount_field("plain") == "plain"
+
+
+def test_disk_fake_mounts(client, tmp_path, monkeypatch):
+    root = _fake_proc_mounts(tmp_path, _FAKE_MOUNTS)
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    sizes = {
+        "/": _FakeStatvfs(1000, 400),
+        "/boot": _FakeStatvfs(100, 90, frsize=1024),
+        "/dev/shm": _FakeStatvfs(0, 0),
+        "/mnt/my disk": _FakeStatvfs(50, 25),
+    }
+
+    def _fake_statvfs(path):
+        if path in sizes:
+            return sizes[path]
+        raise OSError("no such mount")
+
+    monkeypatch.setattr(server.os, "statvfs", _fake_statvfs)
+    r = client.get("/disk", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    # Duplicate "/" kept once; zero-size /dev/shm, unreadable /proc
+    # and /mnt/gone skipped; the malformed line skipped; the
+    # \040 escape decoded to a space.
+    assert body["count"] == 3
+    mounts = body["mounts"]
+    assert [m["mountpoint"] for m in mounts] == [
+        "/", "/boot", "/mnt/my disk",
+    ]
+    by_mp = {m["mountpoint"]: m for m in mounts}
+    root_m = by_mp["/"]
+    assert root_m["device"] == "/dev/mapper/rv"
+    assert root_m["fstype"] == "ext4"
+    assert root_m["total_bytes"] == 1000 * 4096
+    assert root_m["free_bytes"] == 400 * 4096
+    assert root_m["used_pct"] == 60.0
+    boot = by_mp["/boot"]
+    assert boot["total_bytes"] == 100 * 1024
+    assert boot["free_bytes"] == 90 * 1024
+    assert boot["used_pct"] == 10.0
+    data = by_mp["/mnt/my disk"]
+    assert data["device"] == "/dev/sdb1"
+    assert data["total_bytes"] == 50 * 4096
+    assert data["used_pct"] == 50.0
+
+
+def test_disk_no_proc_mounts_yields_empty(client, monkeypatch):
+    monkeypatch.setattr(server, "PROC_DIR", "/nonexistent-proc-dir")
+    r = client.get("/disk", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mounts"] == []
+    assert body["count"] == 0

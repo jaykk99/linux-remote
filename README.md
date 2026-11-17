@@ -98,6 +98,12 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   where an interface has none; counters are 0 and the list empty on
   hosts without `/proc/net`. The phone app lists interfaces in the
   activity view, marking the gateway interface.
+- `GET /disk` - header `X-API-Key: <key>`, read-only per-mount disk
+  usage: device, mountpoint, fstype, total/free bytes, and used
+  percent, from `/proc/mounts` and `statvfs`. Mounts `statvfs` cannot
+  read, and filesystems reporting zero size, are skipped; the list is
+  empty on hosts without `/proc/mounts`. The phone app lists mounts
+  in the activity view.
 
 ## Configuration (env vars)
 

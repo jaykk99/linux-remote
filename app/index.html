@@ -414,11 +414,11 @@
     padding: 2px 16px 12px; scrollbar-width: none;
   }
   #actstats::-webkit-scrollbar { display: none; }
-  #actprocs, #actnet {
+  #actprocs, #actnet, #actdisk {
     flex-shrink: 0; padding: 0 16px 12px;
     display: flex; flex-direction: column; gap: 8px;
   }
-  #actprocs .label, #actnet .label {
+  #actprocs .label, #actnet .label, #actdisk .label {
     font-size: 11px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 1.4px; color: var(--text3);
   }
@@ -559,6 +559,7 @@
     <div id="actstats"></div>
     <div id="actprocs"></div>
     <div id="actnet"></div>
+    <div id="actdisk"></div>
     <div id="actlist"></div>
   </div>
 
@@ -1084,6 +1085,7 @@ async function openActivity() {
   loadActStats();
   loadActProcesses();
   loadActNetwork();
+  loadActDisk();
   const list = $("actlist");
   list.innerHTML = '<div class="hint" style="margin-top:24px;">Loading…</div>';
   const base = baseUrl(), key = keyEl.value.trim();
@@ -1177,6 +1179,41 @@ async function loadActNetwork() {
       box.appendChild(card);
     });
   } catch (e) { /* network is best-effort */ }
+}
+
+// Disk usage per mount from /disk, under the network list.
+// Best-effort: older servers (no /disk yet) just show nothing.
+async function loadActDisk() {
+  const box = $("actdisk");
+  box.innerHTML = "";
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) return;
+  try {
+    const r = await fetch(base + "/disk", { headers: { "X-API-Key": key } });
+    if (!r.ok) return;
+    const d = await r.json();
+    const mounts = (d && d.mounts) || [];
+    if (!mounts.length) return;
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = "Disk";
+    box.appendChild(label);
+    mounts.forEach(m => {
+      const card = document.createElement("div");
+      card.className = "actcard";
+      const mp = document.createElement("div");
+      mp.className = "acmd";
+      mp.textContent = m.mountpoint + " · " + m.fstype;
+      const meta = document.createElement("div");
+      meta.className = "ameta";
+      meta.textContent = fmtBytes(m.total_bytes - m.free_bytes) + " used / "
+        + fmtBytes(m.total_bytes) + " · " + m.used_pct + "%"
+        + (m.device ? " · " + m.device : "");
+      card.appendChild(mp);
+      card.appendChild(meta);
+      box.appendChild(card);
+    });
+  } catch (e) { /* disk is best-effort */ }
 }
 
 function activityCard(line) {

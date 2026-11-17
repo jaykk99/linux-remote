@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.27.0 — 2026-11-17
+- New `GET /disk` endpoint (auth required, read-only): per-mount disk usage (device, mountpoint, fstype, total/free bytes, used percent) from `/proc/mounts` and statvfs, sorted by mountpoint; `/proc/mounts` octal escapes (\040 space, \011 tab, \012 newline, \134 backslash) decoded, duplicate mountpoints deduped, mounts statvfs cannot read and zero-size filesystems skipped, empty list where `/proc/mounts` is absent. The phone app lists mounts in the activity view.
+
 ## 1.26.0 — 2026-11-16
 - New `GET /network` endpoint (auth required, read-only): per-interface IPv4 address, netmask, and MAC (ioctl) plus rx/tx byte and packet counters from `/proc/net/dev`, and the default gateway and its interface from `/proc/net/route` (gateway hex decoded little-endian). Addresses are null where an interface has none; counters are 0 and the interface list empty where `/proc/net` is absent. The phone app lists interfaces in the activity view, marking the gateway interface.
 

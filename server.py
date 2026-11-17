@@ -59,7 +59,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.26.0"
+VERSION = "1.27.0"
 
 
 # ---------------------------------------------------------------------------
@@ -5595,6 +5595,116 @@ def network_info(request: Request, x_api_key: str = Header(default="")):
         "default_gateway": gateway,
         "gateway_iface": gw_iface,
         "interfaces": interfaces,
+    }
+
+
+def _unescape_mount_field(value: str) -> str:
+    """Decode the octal escapes /proc/mounts uses in its fields.
+
+    Space, tab, newline, and backslash appear as \\040, \\011,
+    \\012, and \\134; anything else after a backslash is left as
+    written rather than guessed at.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(value):
+        ch = value[i]
+        if ch == "\\" and i + 3 < len(value) and value[i + 1:i + 4].isdigit():
+            try:
+                out.append(chr(int(value[i + 1:i + 4], 8)))
+                i += 4
+                continue
+            except ValueError:
+                pass
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _read_mounts() -> list[dict]:
+    """Mounted filesystems from /proc/mounts (Linux only).
+
+    Each row: device, mountpoint, fstype. Duplicate mountpoints
+    (bind mounts) keep only the first listing; malformed lines are
+    skipped; a missing /proc/mounts yields []. Nothing here runs a
+    command.
+    """
+    rows: list[dict] = []
+    seen: set[str] = set()
+    try:
+        with open(os.path.join(PROC_DIR, "mounts")) as f:
+            lines = f.readlines()
+    except OSError:
+        return []
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        device = _unescape_mount_field(parts[0])
+        mountpoint = _unescape_mount_field(parts[1])
+        fstype = parts[2]
+        if not device or not mountpoint or not fstype:
+            continue
+        if mountpoint in seen:
+            continue
+        seen.add(mountpoint)
+        rows.append({
+            "device": device,
+            "mountpoint": mountpoint,
+            "fstype": fstype,
+        })
+    return rows
+
+
+def _read_disk() -> list[dict]:
+    """Per-mount disk usage, from /proc/mounts + statvfs.
+
+    A mount is reported only when statvfs succeeds and the
+    filesystem has a nonzero size, which drops pseudo filesystems
+    that report 0 blocks while keeping real disks and tmpfs. Rows
+    are sorted by mountpoint. Nothing here runs a command.
+    """
+    rows: list[dict] = []
+    for mount in _read_mounts():
+        try:
+            st = os.statvfs(mount["mountpoint"])
+        except OSError:
+            continue
+        total = st.f_blocks * st.f_frsize
+        if total <= 0:
+            continue
+        free = st.f_bfree * st.f_frsize
+        rows.append({
+            "device": mount["device"],
+            "mountpoint": mount["mountpoint"],
+            "fstype": mount["fstype"],
+            "total_bytes": total,
+            "free_bytes": free,
+            "used_pct": round(100 * (1 - free / total), 1),
+        })
+    rows.sort(key=lambda r: r["mountpoint"])
+    return rows
+
+
+@app.get("/disk")
+def disk_info(request: Request, x_api_key: str = Header(default="")):
+    """Per-mount disk usage snapshot. Auth required, read-only.
+
+    One row per mounted filesystem with nonzero size: device,
+    mountpoint, fstype, total/free bytes, and used percent, from
+    /proc/mounts and statvfs. Mounts statvfs cannot read are
+    skipped; the list is empty on hosts without /proc/mounts.
+    Nothing here runs a command.
+    """
+    require_key(request, x_api_key)
+    mounts = _read_disk()
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "host": socket.gethostname(),
+        "count": len(mounts),
+        "mounts": mounts,
     }
 
 
