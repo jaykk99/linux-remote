@@ -104,6 +104,13 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   read, and filesystems reporting zero size, are skipped; the list is
   empty on hosts without `/proc/mounts`. The phone app lists mounts
   in the activity view.
+- `GET /services` - header `X-API-Key: <redacted>
+  snapshot: one row per installed systemd `*.service` unit (name,
+  Description from its `[Unit]` section, enabled via a `*.wants`
+  entry, masked via a `/dev/null` symlink, active where systemd has
+  a live cgroup for it, main pid from that cgroup). The list is
+  empty on hosts without systemd unit directories. The phone app
+  lists services in the activity view, active ones first.
 
 ## Configuration (env vars)
 

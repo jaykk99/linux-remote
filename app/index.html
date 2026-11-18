@@ -414,11 +414,11 @@
     padding: 2px 16px 12px; scrollbar-width: none;
   }
   #actstats::-webkit-scrollbar { display: none; }
-  #actprocs, #actnet, #actdisk {
+  #actprocs, #actnet, #actdisk, #actservices {
     flex-shrink: 0; padding: 0 16px 12px;
     display: flex; flex-direction: column; gap: 8px;
   }
-  #actprocs .label, #actnet .label, #actdisk .label {
+  #actprocs .label, #actnet .label, #actdisk .label, #actservices .label {
     font-size: 11px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 1.4px; color: var(--text3);
   }
@@ -560,6 +560,7 @@
     <div id="actprocs"></div>
     <div id="actnet"></div>
     <div id="actdisk"></div>
+    <div id="actservices"></div>
     <div id="actlist"></div>
   </div>
 
@@ -1086,6 +1087,7 @@ async function openActivity() {
   loadActProcesses();
   loadActNetwork();
   loadActDisk();
+  loadActServices();
   const list = $("actlist");
   list.innerHTML = '<div class="hint" style="margin-top:24px;">Loading…</div>';
   const base = baseUrl(), key = keyEl.value.trim();
@@ -1214,6 +1216,51 @@ async function loadActDisk() {
       box.appendChild(card);
     });
   } catch (e) { /* disk is best-effort */ }
+}
+
+// Installed systemd services from /services, under the disk list.
+// Best-effort: older servers (no /services yet) just show nothing.
+async function loadActServices() {
+  const box = $("actservices");
+  box.innerHTML = "";
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) return;
+  try {
+    const r = await fetch(base + "/services", { headers: { "X-API-Key": key } });
+    if (!r.ok) return;
+    const d = await r.json();
+    const services = (d && d.services) || [];
+    if (!services.length) return;
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = "Services" + (typeof d.active_count === "number" ? " \u00b7 " + d.active_count + " running" : "");
+    box.appendChild(label);
+    const shown = services.slice().sort((a, b) => (b.active - a.active) || a.name.localeCompare(b.name));
+    const MAX = 30;
+    shown.slice(0, MAX).forEach(s => {
+      const card = document.createElement("div");
+      card.className = "actcard";
+      const name = document.createElement("div");
+      name.className = "acmd";
+      name.textContent = (s.active ? "\u25cf " : "\u25cb ") + s.name;
+      const meta = document.createElement("div");
+      meta.className = "ameta";
+      const parts = [];
+      if (s.description) parts.push(s.description);
+      if (s.active && s.main_pid) parts.push("pid " + s.main_pid);
+      parts.push(s.masked ? "masked" : s.enabled ? "enabled" : "disabled");
+      meta.textContent = parts.join(" \u00b7 ");
+      card.appendChild(name);
+      card.appendChild(meta);
+      box.appendChild(card);
+    });
+    if (shown.length > MAX) {
+      const more = document.createElement("div");
+      more.className = "ameta";
+      more.textContent = "+" + (shown.length - MAX) + " more services";
+      box.appendChild(more);
+    }
+  } catch (e) { /* services are best-effort */ }
 }
 
 function activityCard(line) {

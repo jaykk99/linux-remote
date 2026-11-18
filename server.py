@@ -59,7 +59,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.27.0"
+VERSION = "1.28.0"
 
 
 # ---------------------------------------------------------------------------
@@ -5337,6 +5337,19 @@ def _uid_to_name(uid: Optional[int]) -> str:
 PROC_DIR = "/proc"
 
 
+# systemd unit locations, overridable in tests with fake unit trees.
+# Precedence order: a unit found in an earlier dir wins over the same
+# name in a later one (how systemd overlays /etc over /lib).
+SYSTEMD_DIRS = (
+    "/etc/systemd/system",
+    "/run/systemd/system",
+    "/usr/lib/systemd/system",
+    "/lib/systemd/system",
+)
+# cgroup v2 root, overridable in tests with a fake cgroup tree.
+CGROUP_ROOT = "/sys/fs/cgroup"
+
+
 def _read_processes() -> list[dict]:
     """One snapshot row per process, from /proc (Linux only).
 
@@ -5705,6 +5718,170 @@ def disk_info(request: Request, x_api_key: str = Header(default="")):
         "host": socket.gethostname(),
         "count": len(mounts),
         "mounts": mounts,
+    }
+
+
+def _parse_unit_description(path: str) -> str | None:
+    """Description= from the [Unit] section of a systemd unit file.
+
+    Only the first Description inside [Unit] counts; a missing or
+    unreadable file, or a unit with no Description, yields None.
+    Nothing here runs a command.
+    """
+    try:
+        with open(path, errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+    in_unit = False
+    for raw in lines:
+        line = raw.strip()
+        if line.startswith("["):
+            in_unit = line == "[Unit]"
+            continue
+        if not in_unit:
+            continue
+        if line.startswith("Description="):
+            value = line[len("Description="):].strip()
+            return value or None
+    return None
+
+
+def _read_enabled_units() -> set[str]:
+    """Unit names enabled via a *.wants entry in the systemd dirs.
+
+    systemctl enable drops a symlink named <unit> into a target's
+    .wants directory; any such entry marks the unit enabled. Missing
+    dirs yield an empty set. Nothing here runs a command.
+    """
+    enabled: set[str] = set()
+    for base in SYSTEMD_DIRS:
+        try:
+            entries = os.listdir(base)
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry.endswith(".wants"):
+                continue
+            wants = os.path.join(base, entry)
+            if not os.path.isdir(wants):
+                continue
+            try:
+                wanted = os.listdir(wants)
+            except OSError:
+                continue
+            for name in wanted:
+                if name.endswith(".service"):
+                    enabled.add(name)
+    return enabled
+
+
+def _read_active_units() -> dict[str, int | None]:
+    """Running units, from live cgroup dirs under CGROUP_ROOT.
+
+    systemd puts each running service in its own cgroup named
+    <unit>.service (usually under system.slice); the first pid in
+    that cgroup's cgroup.procs is the unit's main pid. The walk is
+    one level deep (slice, then unit) so it stays cheap. A host
+    whose cgroups are not visible (containers, no systemd) yields
+    {}. Nothing here runs a command.
+    """
+    active: dict[str, int | None] = {}
+    try:
+        slices = os.listdir(CGROUP_ROOT)
+    except OSError:
+        return {}
+    for slice_name in slices:
+        slice_path = os.path.join(CGROUP_ROOT, slice_name)
+        if not os.path.isdir(slice_path):
+            continue
+        try:
+            units = os.listdir(slice_path)
+        except OSError:
+            continue
+        for unit in units:
+            if not unit.endswith(".service"):
+                continue
+            unit_path = os.path.join(slice_path, unit)
+            if not os.path.isdir(unit_path):
+                continue
+            pid = None
+            try:
+                with open(os.path.join(unit_path, "cgroup.procs")) as f:
+                    first = f.readline().strip()
+                if first.isdigit():
+                    pid = int(first)
+            except (OSError, ValueError):
+                pid = None
+            active[unit] = pid
+    return active
+
+
+def _read_services() -> list[dict]:
+    """Installed systemd service units, with enabled/active state.
+
+    Units are collected from SYSTEMD_DIRS in precedence order (the
+    first listing of a name wins). Each row has name, description
+    (None where the file has none), enabled (a *.wants entry points
+    at it), masked (the unit file is a symlink to /dev/null),
+    active (systemd currently has a live cgroup for it), and
+    main_pid (first pid in that cgroup, None where inactive or
+    unreadable). Rows are sorted by name; the list is empty on
+    hosts without systemd unit directories. Nothing here runs a
+    command.
+    """
+    enabled = _read_enabled_units()
+    active = _read_active_units()
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for base in SYSTEMD_DIRS:
+        try:
+            entries = os.listdir(base)
+        except OSError:
+            continue
+        for name in sorted(entries):
+            if not name.endswith(".service") or name in seen:
+                continue
+            path = os.path.join(base, name)
+            # A masked unit is a symlink to /dev/null, which is not a
+            # regular file, so isfile() alone would drop it.
+            masked = os.path.islink(path) and os.path.realpath(path) == "/dev/null"
+            if not os.path.isfile(path) and not masked:
+                continue
+            seen.add(name)
+            rows.append({
+                "name": name,
+                "description": None if masked else _parse_unit_description(path),
+                "enabled": name in enabled,
+                "masked": masked,
+                "active": name in active,
+                "main_pid": active.get(name),
+            })
+    rows.sort(key=lambda r: r["name"])
+    return rows
+
+
+@app.get("/services")
+def services_info(request: Request, x_api_key: str = Header(default="")):
+    """Installed systemd services snapshot. Auth required, read-only.
+
+    One row per installed *.service unit: name, Description from its
+    [Unit] section, whether it is enabled (a *.wants entry points at
+    it), masked (symlinked to /dev/null), active (systemd has a live
+    cgroup for it), and the main pid from that cgroup. The list is
+    empty on hosts without systemd unit directories. Nothing here
+    runs a command.
+    """
+    require_key(request, x_api_key)
+    services = _read_services()
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "host": socket.gethostname(),
+        "count": len(services),
+        "active_count": sum(1 for s in services if s["active"]),
+        "services": services,
     }
 
 

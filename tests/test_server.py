@@ -2742,3 +2742,127 @@ def test_disk_no_proc_mounts_yields_empty(client, monkeypatch):
     body = r.json()
     assert body["mounts"] == []
     assert body["count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# services
+# ---------------------------------------------------------------------------
+
+def test_services_requires_auth(client):
+    r = client.get("/services")
+    assert r.status_code == 401
+    r = client.get("/services", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_services_snapshot(client):
+    r = client.get("/services", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert isinstance(body["host"], str) and body["host"]
+    services = body["services"]
+    assert isinstance(services, list) and len(services) >= 1
+    assert body["count"] == len(services)
+    assert body["active_count"] == sum(1 for s in services if s["active"])
+    assert [s["name"] for s in services] == sorted(s["name"] for s in services)
+    assert len({s["name"] for s in services}) == len(services)
+    for s in services:
+        assert s["name"].endswith(".service")
+        assert s["description"] is None or isinstance(s["description"], str)
+        assert isinstance(s["enabled"], bool)
+        assert isinstance(s["masked"], bool)
+        assert isinstance(s["active"], bool)
+        assert s["main_pid"] is None or isinstance(s["main_pid"], int)
+        if s["active"]:
+            assert isinstance(s["main_pid"], int) or s["main_pid"] is None
+
+
+def test_services_parse_unit_description(tmp_path):
+    unit = tmp_path / "a.service"
+    unit.write_text(
+        "[Service]\nDescription=Wrong section\nExecStart=/bin/true\n"
+        "[Unit]\nDescription=First wins\nDescription=Second ignored\n"
+        "[Install]\nWantedBy=multi-user.target\n"
+    )
+    assert server._parse_unit_description(str(unit)) == "First wins"
+    nodesc = tmp_path / "b.service"
+    nodesc.write_text("[Unit]\nAfter=network.target\n")
+    assert server._parse_unit_description(str(nodesc)) is None
+    assert server._parse_unit_description(str(tmp_path / "missing.service")) is None
+
+
+def _fake_systemd(tmp_path, monkeypatch):
+    etc = tmp_path / "etc"
+    lib = tmp_path / "lib"
+    cgroup = tmp_path / "cgroup"
+    (etc / "multi-user.target.wants").mkdir(parents=True)
+    (etc / "default.target.wants").mkdir(parents=True)
+    lib.mkdir()
+    (etc / "alpha.service").write_text(
+        "[Unit]\nDescription=Alpha service\n[Service]\nExecStart=/bin/true\n"
+    )
+    (etc / "beta.service").write_text("[Unit]\nDescription=Beta service\n")
+    (etc / "nodesc.service").write_text("[Service]\nExecStart=/bin/true\n")
+    (etc / "plain.txt").write_text("not a unit\n")
+    os.symlink("/dev/null", etc / "masked.service")
+    os.symlink("../alpha.service", etc / "multi-user.target.wants" / "alpha.service")
+    os.symlink("../gamma.service", etc / "default.target.wants" / "gamma.service")
+    os.symlink("orphan.service", etc / "multi-user.target.wants" / "orphan.service")
+    (lib / "alpha.service").write_text("[Unit]\nDescription=Alpha from lib (loses)\n")
+    (lib / "gamma.service").write_text("[Unit]\nDescription=Gamma service\n")
+    (cgroup / "system.slice" / "alpha.service").mkdir(parents=True)
+    (cgroup / "system.slice" / "alpha.service" / "cgroup.procs").write_text("1234\n1235\n")
+    (cgroup / "system.slice" / "beta.service").mkdir(parents=True)
+    (cgroup / "system.slice" / "beta.service" / "cgroup.procs").write_text("")
+    (cgroup / "user.slice").mkdir(parents=True)
+    monkeypatch.setattr(server, "SYSTEMD_DIRS", (str(etc), str(lib)))
+    monkeypatch.setattr(server, "CGROUP_ROOT", str(cgroup))
+    return etc
+
+
+def test_services_fake_units(client, tmp_path, monkeypatch):
+    _fake_systemd(tmp_path, monkeypatch)
+    r = client.get("/services", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    # plain.txt ignored; lib alpha deduped; orphan .wants entry ignored.
+    assert body["count"] == 5
+    by_name = {s["name"]: s for s in body["services"]}
+    assert [s["name"] for s in body["services"]] == sorted(by_name)
+    alpha = by_name["alpha.service"]
+    assert alpha["description"] == "Alpha service"
+    assert alpha["enabled"] is True
+    assert alpha["masked"] is False
+    assert alpha["active"] is True
+    assert alpha["main_pid"] == 1234
+    beta = by_name["beta.service"]
+    assert beta["description"] == "Beta service"
+    assert beta["enabled"] is False
+    assert beta["active"] is True
+    assert beta["main_pid"] is None  # empty cgroup.procs
+    gamma = by_name["gamma.service"]
+    assert gamma["description"] == "Gamma service"
+    assert gamma["enabled"] is True  # via default.target.wants
+    assert gamma["active"] is False
+    assert gamma["main_pid"] is None
+    masked = by_name["masked.service"]
+    assert masked["masked"] is True
+    assert masked["description"] is None
+    assert masked["enabled"] is False
+    assert masked["active"] is False
+    assert by_name["nodesc.service"]["description"] is None
+    assert body["active_count"] == 2
+
+
+def test_services_no_systemd_yields_empty(client, monkeypatch):
+    monkeypatch.setattr(server, "SYSTEMD_DIRS", ("/nonexistent-a", "/nonexistent-b"))
+    monkeypatch.setattr(server, "CGROUP_ROOT", "/nonexistent-cgroup")
+    r = client.get("/services", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["services"] == []
+    assert body["count"] == 0
+    assert body["active_count"] == 0
