@@ -59,7 +59,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.28.0"
+VERSION = "1.29.0"
 
 
 # ---------------------------------------------------------------------------
@@ -5882,6 +5882,65 @@ def services_info(request: Request, x_api_key: str = Header(default="")):
         "count": len(services),
         "active_count": sum(1 for s in services if s["active"]),
         "services": services,
+    }
+
+
+def _read_uptime() -> Optional[dict]:
+    """Host uptime and boot time from /proc (Linux only).
+
+    /proc/uptime gives seconds since boot (first field); /proc/stat
+    gives the boot epoch on its `btime` line. Returns None when
+    /proc/uptime is missing or malformed (non-Linux hosts,
+    containers without /proc); boot_time is None when the btime
+    line is absent or malformed. Nothing here runs a command.
+    """
+    try:
+        with open(os.path.join(PROC_DIR, "uptime")) as f:
+            first = f.read().split()
+    except OSError:
+        return None
+    try:
+        uptime_seconds = round(float(first[0]), 2)
+    except (ValueError, IndexError):
+        return None
+    boot_time: Optional[str] = None
+    try:
+        with open(os.path.join(PROC_DIR, "stat")) as f:
+            for line in f:
+                if line.startswith("btime "):
+                    btime = int(line.split()[1])
+                    boot_time = datetime.datetime.fromtimestamp(
+                        btime, tz=datetime.timezone.utc
+                    ).isoformat(timespec="seconds").replace("+00:00", "Z")
+                    break
+    except (OSError, ValueError, IndexError):
+        boot_time = None
+    return {
+        "uptime_seconds": uptime_seconds,
+        "boot_time": boot_time,
+    }
+
+
+@app.get("/uptime")
+def uptime_info(request: Request, x_api_key: str = Header(default="")):
+    """Host uptime and boot time snapshot. Auth required, read-only.
+
+    Seconds since the host booted from /proc/uptime, and the boot
+    time (UTC, ISO 8601) from the `btime` line of /proc/stat. Both
+    are null on hosts without /proc/uptime; boot_time is null where
+    the btime line is absent. This is host uptime, not the server
+    process uptime /system and /health report as uptime_s.
+    Nothing here runs a command.
+    """
+    require_key(request, x_api_key)
+    uptime = _read_uptime()
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "host": socket.gethostname(),
+        "uptime_seconds": None if uptime is None else uptime["uptime_seconds"],
+        "boot_time": None if uptime is None else uptime["boot_time"],
     }
 
 

@@ -1040,6 +1040,16 @@ function fmtBytes(n) {
   return (u === 0 ? Math.round(v) : v.toFixed(v >= 100 ? 0 : 1)) + units[u];
 }
 
+function fmtUptime(s) {
+  if (s == null || isNaN(s)) return "n/a";
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600),
+        m = Math.floor(s % 3600 / 60);
+  if (d > 0) return d + "d " + h + "h";
+  if (h > 0) return h + "h " + m + "m";
+  if (m > 0) return m + "m";
+  return Math.floor(s) + "s";
+}
+
 // Summary analytics strip at the top of the activity view.
 async function loadActStats() {
   const box = $("actstats");
@@ -1064,6 +1074,17 @@ async function loadActStats() {
     box.appendChild(statCard(String(s.blocked), "blocked"));
     box.appendChild(statCard(top, "top cmd"));
   } catch (e) { /* stats are best-effort; the list below still loads */ }
+  // Host uptime from /uptime, same strip. Best-effort: older
+  // servers (no /uptime yet) just show the cards above. Placed
+  // before /system so it still loads when /system is missing.
+  try {
+    const r = await fetch(base + "/uptime", { headers: { "X-API-Key": key } });
+    if (r.ok) {
+      const s = await r.json();
+      if (s && s.ok === true && typeof s.uptime_seconds === "number")
+        box.appendChild(statCard(fmtUptime(s.uptime_seconds), "host up"));
+    }
+  } catch (e) { /* uptime card is best-effort */ }
   // Host snapshot from /system, same strip. Best-effort too: older
   // servers (no /system yet) just show the stats cards above.
   try {

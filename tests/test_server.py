@@ -3,6 +3,7 @@
 Run:  python3 -m pytest tests/ -q
 """
 
+import datetime
 import os
 import sys
 import time
@@ -2866,3 +2867,96 @@ def test_services_no_systemd_yields_empty(client, monkeypatch):
     assert body["services"] == []
     assert body["count"] == 0
     assert body["active_count"] == 0
+
+
+# /uptime (v1.29.0)
+# ---------------------------------------------------------------------------
+
+def test_uptime_requires_auth(client):
+    r = client.get("/uptime")
+    assert r.status_code == 401
+    r = client.get("/uptime", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_uptime_snapshot(client):
+    r = client.get("/uptime", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert isinstance(body["host"], str) and body["host"]
+    # This Linux box has been up for some positive time.
+    assert isinstance(body["uptime_seconds"], float)
+    assert body["uptime_seconds"] > 0
+    # Boot time parses as UTC ISO 8601 and is in the past; boot
+    # time + uptime lands within a few minutes of now.
+    boot = datetime.datetime.fromisoformat(
+        body["boot_time"].replace("Z", "+00:00")
+    )
+    now = datetime.datetime.now(datetime.timezone.utc)
+    assert boot <= now
+    assert abs((boot.timestamp() + body["uptime_seconds"]) - now.timestamp()) < 300
+
+
+def _fake_proc_uptime(tmp_path, uptime="123456.78 987654.32\n", stat=None):
+    """Build a fake /proc tree with uptime and stat files."""
+    root = tmp_path / "proc"
+    root.mkdir(parents=True, exist_ok=True)
+    if uptime is not None:
+        (root / "uptime").write_text(uptime)
+    if stat is not None:
+        (root / "stat").write_text(stat)
+    return root
+
+
+_FAKE_STAT_BTIME = (
+    "cpu  100 0 200 300 0 0 0 0 0 0\n"
+    "cpu0 50 0 100 150 0 0 0 0 0 0\n"
+    "btime 1700000000\n"
+)
+
+
+def test_uptime_fake_proc(client, tmp_path, monkeypatch):
+    root = _fake_proc_uptime(tmp_path, stat=_FAKE_STAT_BTIME)
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/uptime", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["uptime_seconds"] == 123456.78
+    # 1700000000 == 2023-11-14T22:13:20Z.
+    assert body["boot_time"] == "2023-11-14T22:13:20Z"
+
+
+def test_uptime_no_btime_yields_null_boot(client, tmp_path, monkeypatch):
+    root = _fake_proc_uptime(
+        tmp_path, stat="cpu  100 0 200 300 0 0 0 0 0 0\n"
+    )
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/uptime", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["uptime_seconds"] == 123456.78
+    assert body["boot_time"] is None
+
+
+def test_uptime_no_proc_yields_nulls(client, monkeypatch):
+    monkeypatch.setattr(server, "PROC_DIR", "/nonexistent-proc-dir")
+    r = client.get("/uptime", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["uptime_seconds"] is None
+    assert body["boot_time"] is None
+
+
+def test_uptime_malformed_uptime_yields_nulls(client, tmp_path, monkeypatch):
+    root = _fake_proc_uptime(
+        tmp_path, uptime="not-a-number here\n", stat=_FAKE_STAT_BTIME
+    )
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/uptime", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["uptime_seconds"] is None
+    assert body["boot_time"] is None

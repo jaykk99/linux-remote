@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.29.0 — 2026-11-18
+- New `GET /uptime` endpoint (auth required, read-only): host uptime in seconds from `/proc/uptime` and the boot time (UTC, ISO 8601) from the `btime` line of `/proc/stat`; both null where `/proc/uptime` is absent, boot time null where the `btime` line is absent. This is host uptime, distinct from the server-process uptime `/system` and `/health` report as `uptime_s`. The phone app shows host uptime as a card in the activity view.
+
 ## 1.28.0 — 2026-11-18
 - New `GET /services` endpoint (auth required, read-only): installed systemd service units (name, Description from [Unit], enabled via *.wants, masked via /dev/null symlink, active where systemd has a live cgroup, main pid from cgroup.procs), sorted by name, from the systemd unit dirs in /etc > /run > /usr/lib > /lib precedence; empty list where systemd unit directories are absent. The phone app lists services in the activity view, active first.
 

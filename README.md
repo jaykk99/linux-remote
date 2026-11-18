@@ -111,6 +111,12 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   a live cgroup for it, main pid from that cgroup). The list is
   empty on hosts without systemd unit directories. The phone app
   lists services in the activity view, active ones first.
+- `GET /uptime` - header `X-API-Key: <key>`, read-only host uptime:
+  seconds since the host booted from `/proc/uptime`, and the boot
+  time (UTC, ISO 8601) from the `btime` line of `/proc/stat`. Both
+  are null on hosts without `/proc/uptime`; boot time is null where
+  the `btime` line is absent. The phone app shows host uptime as a
+  card in the activity view.
 
 ## Configuration (env vars)
 
