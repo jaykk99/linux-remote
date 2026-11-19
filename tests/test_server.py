@@ -2960,3 +2960,188 @@ def test_uptime_malformed_uptime_yields_nulls(client, tmp_path, monkeypatch):
     body = r.json()
     assert body["uptime_seconds"] is None
     assert body["boot_time"] is None
+
+
+# ---------------------------------------------------------------------------
+# cpu
+# ---------------------------------------------------------------------------
+
+def test_cpu_requires_auth(client):
+    r = client.get("/cpu")
+    assert r.status_code == 401
+    r = client.get("/cpu", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_cpu_snapshot(client):
+    r = client.get("/cpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert isinstance(body["host"], str) and body["host"]
+    # This Linux box has at least one core and a cpu line in /proc/stat.
+    assert isinstance(body["cores"], int) and body["cores"] >= 1
+    assert body["model"] is None or isinstance(body["model"], str)
+    assert body["mhz"] is None or isinstance(body["mhz"], float)
+    overall = body["overall"]
+    assert overall is not None
+    assert overall["name"] == "cpu"
+    assert overall["total"] > 0
+    assert 0.0 <= overall["usage_pct"] <= 100.0
+    # Per-core rows: one per core, ticks add up to the total.
+    assert body["count"] == len(body["cpus"]) == body["cores"]
+    for row in body["cpus"]:
+        assert row["name"].startswith("cpu") and row["name"][3:].isdigit()
+        assert row["total"] == (
+            row["user"] + row["nice"] + row["system"] + row["idle"]
+            + row["iowait"] + row["irq"] + row["softirq"] + row["steal"]
+        )
+        assert 0.0 <= row["usage_pct"] <= 100.0
+
+
+def test_cpu_usage_pct_math():
+    assert server._cpu_usage_pct(0, 0) == 0.0
+    assert server._cpu_usage_pct(0, 100) == 100.0
+    assert server._cpu_usage_pct(100, 100) == 0.0
+    # iowait counts as idle, so 840 idle of 1000 ticks is 16% busy.
+    assert server._cpu_usage_pct(840, 1000) == 16.0
+
+
+def test_cpu_parse_row():
+    row = server._parse_cpu_time_row(
+        ["cpu", "100", "10", "50", "800", "40", "0", "0", "0"]
+    )
+    assert row == {
+        "name": "cpu", "user": 100, "nice": 10, "system": 50,
+        "idle": 800, "iowait": 40, "irq": 0, "softirq": 0, "steal": 0,
+        "total": 1000, "usage_pct": 16.0,
+    }
+    # Older kernels report fewer columns; missing fields pad to 0.
+    row = server._parse_cpu_time_row(["cpu0", "10", "0", "5", "85"])
+    assert row["total"] == 100
+    assert row["iowait"] == 0 and row["usage_pct"] == 15.0
+    # Malformed rows are None: too few fields, non-numeric, negative.
+    assert server._parse_cpu_time_row(["cpu", "10", "0", "5"]) is None
+    assert server._parse_cpu_time_row(
+        ["cpu", "10", "x", "5", "85", "0", "0", "0"]
+    ) is None
+    assert server._parse_cpu_time_row(
+        ["cpu", "10", "0", "-5", "85", "0", "0", "0"]
+    ) is None
+
+
+_FAKE_CPUINFO = (
+    "processor\t: 0\n"
+    "model name\t: Fake CPU 9000\n"
+    "cpu MHz\t\t: 2400.000\n"
+    "processor\t: 1\n"
+    "model name\t: Fake CPU 9000\n"
+    "cpu MHz\t\t: 2400.000\n"
+)
+
+_FAKE_STAT_CPU = (
+    "cpu  100 10 50 800 40 0 0 0 0 0\n"
+    "cpu0 50 5 25 400 20 0 0 0 0 0\n"
+    "cpu1 50 5 25 400 20 0 0 0 0 0\n"
+    "btime 1700000000\n"
+)
+
+
+def _fake_proc_cpu(tmp_path, cpuinfo=_FAKE_CPUINFO, stat=_FAKE_STAT_CPU):
+    """Build a fake /proc tree with cpuinfo and stat files."""
+    root = tmp_path / "proc"
+    root.mkdir(parents=True, exist_ok=True)
+    if cpuinfo is not None:
+        (root / "cpuinfo").write_text(cpuinfo)
+    if stat is not None:
+        (root / "stat").write_text(stat)
+    return root
+
+
+def test_cpu_fake_proc(client, tmp_path, monkeypatch):
+    root = _fake_proc_cpu(tmp_path)
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/cpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["model"] == "Fake CPU 9000"
+    assert body["cores"] == 2
+    assert body["mhz"] == 2400.0
+    assert body["overall"]["total"] == 1000
+    assert body["overall"]["usage_pct"] == 16.0
+    assert body["count"] == 2
+    assert [c["name"] for c in body["cpus"]] == ["cpu0", "cpu1"]
+    assert body["cpus"][0]["total"] == 500
+    assert body["cpus"][0]["usage_pct"] == 16.0
+    assert body["cpus"][1]["user"] == 50
+
+
+def test_cpu_no_proc_yields_nulls(client, monkeypatch):
+    monkeypatch.setattr(server, "PROC_DIR", "/nonexistent-proc-dir")
+    r = client.get("/cpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["model"] is None
+    assert body["cores"] == 0
+    assert body["mhz"] is None
+    assert body["overall"] is None
+    assert body["count"] == 0
+    assert body["cpus"] == []
+
+
+def test_cpu_no_cpu_line_yields_null_overall(client, tmp_path, monkeypatch):
+    root = _fake_proc_cpu(tmp_path, stat="btime 1700000000\n")
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/cpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    # cpuinfo still parses; only the times are missing.
+    assert body["model"] == "Fake CPU 9000"
+    assert body["cores"] == 2
+    assert body["overall"] is None
+    assert body["cpus"] == []
+
+
+def test_cpu_malformed_core_row_skipped(client, tmp_path, monkeypatch):
+    stat = (
+        "cpu  100 10 50 800 40 0 0 0\n"
+        "cpu0 50 5 25 400 20 0 0 0\n"
+        "cpu1 not-a-number here\n"
+        "cpu2 10 0 5 85 0 0 0 0\n"
+    )
+    root = _fake_proc_cpu(tmp_path, stat=stat)
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/cpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["overall"]["total"] == 1000
+    assert [c["name"] for c in body["cpus"]] == ["cpu0", "cpu2"]
+
+
+def test_cpu_malformed_cpuinfo(client, tmp_path, monkeypatch):
+    root = _fake_proc_cpu(
+        tmp_path, cpuinfo="garbage without colons\ncpu MHz : fast\n"
+    )
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/cpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    # Bad MHz yields null, not a crash; stat still parses.
+    assert body["model"] is None
+    assert body["cores"] == 0
+    assert body["mhz"] is None
+    assert body["overall"]["total"] == 1000
+
+
+def test_cpu_missing_cpuinfo(client, tmp_path, monkeypatch):
+    root = _fake_proc_cpu(tmp_path, cpuinfo=None)
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/cpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["model"] is None
+    assert body["cores"] == 0
+    assert body["overall"]["total"] == 1000
+    assert body["count"] == 2

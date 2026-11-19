@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.30.0 — 2026-11-19
+- New `GET /cpu` endpoint (auth required, read-only): CPU model name, core count, and clock from `/proc/cpuinfo`, plus the aggregate and per-core CPU time counters from `/proc/stat` (user, nice, system, idle, iowait, irq, softirq, steal, total ticks) with `usage_pct`, the share of time spent working since boot (idle counts idle + iowait; a zero total is 0.0). Identity fields are null/0 where `/proc/cpuinfo` is absent; overall is null and the list empty where `/proc/stat` has no usable cpu line; malformed core rows are skipped, short rows pad missing fields to 0. The phone app shows overall CPU usage as a card in the activity view and lists per-core usage under the services list.
+
 ## 1.29.0 — 2026-11-18
 - New `GET /uptime` endpoint (auth required, read-only): host uptime in seconds from `/proc/uptime` and the boot time (UTC, ISO 8601) from the `btime` line of `/proc/stat`; both null where `/proc/uptime` is absent, boot time null where the `btime` line is absent. This is host uptime, distinct from the server-process uptime `/system` and `/health` report as `uptime_s`. The phone app shows host uptime as a card in the activity view.
 

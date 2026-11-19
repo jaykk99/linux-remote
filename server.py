@@ -59,7 +59,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.29.0"
+VERSION = "1.30.0"
 
 
 # ---------------------------------------------------------------------------
@@ -5941,6 +5941,171 @@ def uptime_info(request: Request, x_api_key: str = Header(default="")):
         "host": socket.gethostname(),
         "uptime_seconds": None if uptime is None else uptime["uptime_seconds"],
         "boot_time": None if uptime is None else uptime["boot_time"],
+    }
+
+
+def _cpu_usage_pct(idle_ticks: int, total_ticks: int) -> float:
+    """Share of CPU time spent doing work, since boot.
+
+    Idle counts both idle and iowait ticks: time the CPU was not
+    running anything. A zero total (no ticks at all) is 0.0, not a
+    division error. Rounded to one decimal, matching used_pct on
+    /disk and /system.
+    """
+    if total_ticks <= 0:
+        return 0.0
+    return round(100 * (1 - idle_ticks / total_ticks), 1)
+
+
+def _parse_cpu_time_row(parts: list[str]) -> Optional[dict]:
+    """One `cpu` / `cpuN` row from /proc/stat, or None if malformed.
+
+    Fields are user nice system idle iowait irq softirq steal
+    (guest/guest_nice, when present, are ignored: they are already
+    counted inside user/nice). At least the first four fields must
+    be present and numeric; later fields default to 0 on older
+    kernels that report fewer columns. A negative tick count is
+    malformed.
+    """
+    if len(parts) < 5:
+        return None
+    try:
+        ticks = [int(p) for p in parts[1:9]]
+    except ValueError:
+        return None
+    while len(ticks) < 8:
+        ticks.append(0)
+    if any(t < 0 for t in ticks):
+        return None
+    user, nice, system, idle, iowait, irq, softirq, steal = ticks
+    total = sum(ticks)
+    return {
+        "name": parts[0],
+        "user": user,
+        "nice": nice,
+        "system": system,
+        "idle": idle,
+        "iowait": iowait,
+        "irq": irq,
+        "softirq": softirq,
+        "steal": steal,
+        "total": total,
+        "usage_pct": _cpu_usage_pct(idle + iowait, total),
+    }
+
+
+def _read_cpu_times() -> tuple[Optional[dict], list[dict]]:
+    """Aggregate + per-core CPU time rows from /proc/stat.
+
+    Returns (overall, per-core): the `cpu` aggregate row, and one
+    row per `cpuN` core in numeric order. A missing /proc/stat, or
+    one with no usable `cpu` line, yields (None, []); a malformed
+    core row is skipped while the rest still report. Nothing here
+    runs a command.
+    """
+    try:
+        with open(os.path.join(PROC_DIR, "stat")) as f:
+            lines = f.readlines()
+    except OSError:
+        return None, []
+    overall: Optional[dict] = None
+    cores: list[dict] = []
+    for line in lines:
+        parts = line.split()
+        if not parts:
+            continue
+        name = parts[0]
+        if name == "cpu":
+            row = _parse_cpu_time_row(parts)
+            if row is not None:
+                overall = row
+        elif name.startswith("cpu") and name[3:].isdigit():
+            row = _parse_cpu_time_row(parts)
+            if row is not None:
+                cores.append(row)
+    cores.sort(key=lambda r: int(r["name"][3:]))
+    return overall, cores
+
+
+def _read_cpuinfo() -> dict:
+    """CPU model, core count, and clock from /proc/cpuinfo.
+
+    Cores count the `processor` entries; model is the first
+    `model name`, mhz the first `cpu MHz`. A missing or unreadable
+    /proc/cpuinfo yields model None, cores 0, mhz None; a malformed
+    MHz value yields mhz None while the rest still report. Nothing
+    here runs a command.
+    """
+    model: Optional[str] = None
+    cores = 0
+    mhz: Optional[float] = None
+    try:
+        with open(os.path.join(PROC_DIR, "cpuinfo")) as f:
+            lines = f.readlines()
+    except OSError:
+        return {"model": None, "cores": 0, "mhz": None}
+    for line in lines:
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip()
+        value = value.strip()
+        if key == "processor":
+            cores += 1
+        elif key == "model name" and model is None and value:
+            model = value
+        elif key == "cpu MHz" and mhz is None and value:
+            try:
+                mhz = round(float(value), 2)
+            except ValueError:
+                mhz = None
+    return {"model": model, "cores": cores, "mhz": mhz}
+
+
+def _read_cpu() -> dict:
+    """Full CPU snapshot: identity from /proc/cpuinfo, times from /proc/stat.
+
+    usage_pct is the share of time spent working since boot, for
+    the aggregate and for each core. Identity fields are null/0
+    where /proc/cpuinfo is absent; overall is null and the core
+    list empty where /proc/stat has no usable cpu line.
+    """
+    info = _read_cpuinfo()
+    overall, cores = _read_cpu_times()
+    return {
+        "model": info["model"],
+        "cores": info["cores"],
+        "mhz": info["mhz"],
+        "overall": overall,
+        "cpus": cores,
+    }
+
+
+@app.get("/cpu")
+def cpu_info(request: Request, x_api_key: str = Header(default="")):
+    """CPU model, cores, and time snapshot. Auth required, read-only.
+
+    Model name, core count, and clock from /proc/cpuinfo, plus the
+    aggregate and per-core CPU time counters from /proc/stat (user,
+    nice, system, idle, iowait, irq, softirq, steal, total ticks)
+    with usage_pct, the share of time spent working since boot.
+    Identity fields are null/0 on hosts without /proc/cpuinfo;
+    overall is null and the list empty where /proc/stat has no
+    usable cpu line. Nothing here runs a command.
+    """
+    require_key(request, x_api_key)
+    cpu = _read_cpu()
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "host": socket.gethostname(),
+        "model": cpu["model"],
+        "cores": cpu["cores"],
+        "mhz": cpu["mhz"],
+        "overall": cpu["overall"],
+        "count": len(cpu["cpus"]),
+        "cpus": cpu["cpus"],
     }
 
 

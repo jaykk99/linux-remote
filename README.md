@@ -117,6 +117,15 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   are null on hosts without `/proc/uptime`; boot time is null where
   the `btime` line is absent. The phone app shows host uptime as a
   card in the activity view.
+- `GET /cpu` - header `X-API-Key: <key>`, read-only CPU snapshot:
+  model name, core count, and clock from `/proc/cpuinfo`, plus the
+  aggregate and per-core time counters from `/proc/stat` (user,
+  nice, system, idle, iowait, irq, softirq, steal, total ticks)
+  with `usage_pct`, the share of time spent working since boot.
+  Identity fields are null/0 on hosts without `/proc/cpuinfo`;
+  overall is null and the list empty where `/proc/stat` has no
+  usable cpu line. The phone app shows overall CPU usage as a card
+  and lists per-core usage in the activity view.
 
 ## Configuration (env vars)
 

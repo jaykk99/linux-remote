@@ -414,11 +414,11 @@
     padding: 2px 16px 12px; scrollbar-width: none;
   }
   #actstats::-webkit-scrollbar { display: none; }
-  #actprocs, #actnet, #actdisk, #actservices {
+  #actprocs, #actnet, #actdisk, #actservices, #actcpu {
     flex-shrink: 0; padding: 0 16px 12px;
     display: flex; flex-direction: column; gap: 8px;
   }
-  #actprocs .label, #actnet .label, #actdisk .label, #actservices .label {
+  #actprocs .label, #actnet .label, #actdisk .label, #actservices .label, #actcpu .label {
     font-size: 11px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 1.4px; color: var(--text3);
   }
@@ -561,6 +561,7 @@
     <div id="actnet"></div>
     <div id="actdisk"></div>
     <div id="actservices"></div>
+    <div id="actcpu"></div>
     <div id="actlist"></div>
   </div>
 
@@ -1085,6 +1086,17 @@ async function loadActStats() {
         box.appendChild(statCard(fmtUptime(s.uptime_seconds), "host up"));
     }
   } catch (e) { /* uptime card is best-effort */ }
+  // Overall CPU usage from /cpu, same strip. Best-effort: older
+  // servers (no /cpu yet) just show the cards above. Placed
+  // before /system so it still loads when /system is missing.
+  try {
+    const r = await fetch(base + "/cpu", { headers: { "X-API-Key": key } });
+    if (r.ok) {
+      const s = await r.json();
+      if (s && s.ok === true && s.overall && typeof s.overall.usage_pct === "number")
+        box.appendChild(statCard(s.overall.usage_pct + "%", "cpu"));
+    }
+  } catch (e) { /* cpu card is best-effort */ }
   // Host snapshot from /system, same strip. Best-effort too: older
   // servers (no /system yet) just show the stats cards above.
   try {
@@ -1109,6 +1121,7 @@ async function openActivity() {
   loadActNetwork();
   loadActDisk();
   loadActServices();
+  loadActCPU();
   const list = $("actlist");
   list.innerHTML = '<div class="hint" style="margin-top:24px;">Loading…</div>';
   const base = baseUrl(), key = keyEl.value.trim();
@@ -1282,6 +1295,42 @@ async function loadActServices() {
       box.appendChild(more);
     }
   } catch (e) { /* services are best-effort */ }
+}
+
+// CPU model and per-core usage from /cpu, under the services list.
+// Best-effort: older servers (no /cpu yet) just show nothing.
+async function loadActCPU() {
+  const box = $("actcpu");
+  box.innerHTML = "";
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) return;
+  try {
+    const r = await fetch(base + "/cpu", { headers: { "X-API-Key": key } });
+    if (!r.ok) return;
+    const d = await r.json();
+    const cpus = (d && d.cpus) || [];
+    if (!cpus.length && !d.model) return;
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = "CPU" + (d.model ? " \u00b7 " + d.model : "")
+      + (typeof d.cores === "number" && d.cores ? " \u00b7 " + d.cores + " cores" : "")
+      + (typeof d.mhz === "number" ? " \u00b7 " + d.mhz + " MHz" : "");
+    box.appendChild(label);
+    cpus.forEach(c => {
+      const card = document.createElement("div");
+      card.className = "actcard";
+      const name = document.createElement("div");
+      name.className = "acmd";
+      name.textContent = c.name + " \u00b7 " + c.usage_pct + "%";
+      const meta = document.createElement("div");
+      meta.className = "ameta";
+      meta.textContent = "user " + c.user + " \u00b7 sys " + c.system
+        + " \u00b7 idle " + c.idle + " \u00b7 iowait " + c.iowait;
+      card.appendChild(name);
+      card.appendChild(meta);
+      box.appendChild(card);
+    });
+  } catch (e) { /* cpu is best-effort */ }
 }
 
 function activityCard(line) {
