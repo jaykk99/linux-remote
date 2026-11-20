@@ -59,7 +59,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.31.0"
+VERSION = "1.32.0"
 
 
 # ---------------------------------------------------------------------------
@@ -5349,6 +5349,9 @@ SYSTEMD_DIRS = (
 # cgroup v2 root, overridable in tests with a fake cgroup tree.
 CGROUP_ROOT = "/sys/fs/cgroup"
 
+# Thermal zone root, overridable in tests with a fake sys tree.
+THERMAL_DIR = "/sys/class/thermal"
+
 
 def _read_processes() -> list[dict]:
     """One snapshot row per process, from /proc (Linux only).
@@ -6200,6 +6203,75 @@ def _read_meminfo_full() -> Optional[dict]:
             round(100 * (1 - swap_free / swap_total), 1)
             if swap_total else None
         ),
+    }
+
+
+def _read_temperatures() -> list[dict]:
+    """Thermal zone temperatures from /sys/class/thermal.
+
+    One row per `thermal_zoneN` directory, in numeric order: the
+    zone name, the sensor type from its `type` file, and the
+    temperature in degrees C from its `temp` file (millidegrees
+    in the file, rounded to one decimal). A zone with a missing or
+    unreadable `type` falls back to its directory name; a zone
+    with a missing, unreadable, or non-numeric `temp` is skipped.
+    An absent thermal directory yields an empty list. Nothing
+    here runs a command.
+    """
+    try:
+        entries = os.listdir(THERMAL_DIR)
+    except OSError:
+        return []
+    zones: list[dict] = []
+    for entry in entries:
+        if not entry.startswith("thermal_zone"):
+            continue
+        suffix = entry[len("thermal_zone"):]
+        if not suffix.isdigit():
+            continue
+        zone_dir = os.path.join(THERMAL_DIR, entry)
+        try:
+            with open(os.path.join(zone_dir, "type")) as f:
+                name = f.read().strip()
+        except OSError:
+            name = ""
+        if not name:
+            name = entry
+        try:
+            with open(os.path.join(zone_dir, "temp")) as f:
+                milli = int(f.read().strip())
+        except (OSError, ValueError):
+            continue
+        zones.append({
+            "zone": entry,
+            "name": name,
+            "temp_c": round(milli / 1000, 1),
+        })
+    zones.sort(key=lambda z: int(z["zone"][len("thermal_zone"):]))
+    return zones
+
+
+@app.get("/temperature")
+def temperature_info(request: Request, x_api_key: str = Header(default="")):
+    """Thermal zone temperatures. Auth required, read-only.
+
+    One row per thermal zone from /sys/class/thermal: zone name,
+    sensor type, and temperature in degrees C, plus `hottest`,
+    the warmest zone (null where there are no zones). The list
+    is empty on hosts without thermal zones. Nothing here runs
+    a command.
+    """
+    require_key(request, x_api_key)
+    zones = _read_temperatures()
+    hottest = max(zones, key=lambda z: z["temp_c"]) if zones else None
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "host": socket.gethostname(),
+        "count": len(zones),
+        "hottest": hottest,
+        "zones": zones,
     }
 
 

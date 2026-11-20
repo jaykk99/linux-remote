@@ -136,6 +136,13 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   `swap_used_pct` is null where there is no swap. The phone app
   shows memory and swap cards in the activity view, and a swap
   card in the stats strip where the host has swap.
+- `GET /temperature` - header `X-API-Key: <key>`, read-only
+  thermal zone temperatures: one row per `thermal_zoneN` under
+  `/sys/class/thermal` (zone name, sensor type from its `type`
+  file, temperature in degrees C from its `temp` file in
+  millidegrees), plus `hottest`, the warmest zone. The list is
+  empty on hosts without thermal zones. The phone app lists the
+  zones in the activity view, naming the hottest one.
 
 ## Configuration (env vars)
 

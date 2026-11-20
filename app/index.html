@@ -1137,6 +1137,7 @@ async function openActivity() {
   loadActServices();
   loadActCPU();
   loadActMemory();
+  loadActTemp();
   const list = $("actlist");
   list.innerHTML = '<div class="hint" style="margin-top:24px;">Loading…</div>';
   const base = baseUrl(), key = keyEl.value.trim();
@@ -1395,6 +1396,42 @@ async function loadActMemory() {
       box.appendChild(swap);
     }
   } catch (e) { /* memory is best-effort */ }
+}
+
+// Thermal zone temperatures from /temperature, under the memory
+// list. Best-effort: older servers (no /temperature yet) just
+// show nothing, as do hosts with no thermal zones.
+async function loadActTemp() {
+  const box = $("acttemp");
+  box.innerHTML = "";
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) return;
+  try {
+    const r = await fetch(base + "/temperature", { headers: { "X-API-Key": key } });
+    if (!r.ok) return;
+    const d = await r.json();
+    const zones = (d && d.zones) || [];
+    if (!zones.length) return;
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = "Temperature"
+      + (d.hottest ? " \u00b7 hottest " + d.hottest.name + " "
+        + d.hottest.temp_c + "\u00b0C" : "");
+    box.appendChild(label);
+    zones.forEach(z => {
+      const card = document.createElement("div");
+      card.className = "actcard";
+      const name = document.createElement("div");
+      name.className = "acmd";
+      name.textContent = z.name + " \u00b7 " + z.temp_c + "\u00b0C";
+      const meta = document.createElement("div");
+      meta.className = "ameta";
+      meta.textContent = z.zone;
+      card.appendChild(name);
+      card.appendChild(meta);
+      box.appendChild(card);
+    });
+  } catch (e) { /* temperature is best-effort */ }
 }
 
 function activityCard(line) {

@@ -3281,3 +3281,122 @@ def test_memory_malformed_value_skipped(client, tmp_path, monkeypatch):
     # Bad MemFree is skipped, not fatal; it defaults to 0.
     assert body["free_bytes"] == 0
     assert body["used_pct"] == 50.0
+
+
+# ---------------------------------------------------------------------------
+# temperature
+# ---------------------------------------------------------------------------
+
+def test_temperature_requires_auth(client):
+    r = client.get("/temperature")
+    assert r.status_code == 401
+    r = client.get("/temperature", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_temperature_snapshot(client):
+    r = client.get("/temperature", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert isinstance(body["host"], str) and body["host"]
+    # This VM may have no thermal zones at all; either way the
+    # shape holds and hottest agrees with the list.
+    assert body["count"] == len(body["zones"])
+    for z in body["zones"]:
+        assert z["zone"].startswith("thermal_zone")
+        assert isinstance(z["name"], str) and z["name"]
+        assert isinstance(z["temp_c"], float)
+    if body["zones"]:
+        assert body["hottest"] == max(
+            body["zones"], key=lambda z: z["temp_c"]
+        )
+    else:
+        assert body["hottest"] is None
+
+
+def _fake_thermal(tmp_path, zones):
+    """Build a fake /sys/class/thermal tree.
+
+    zones: mapping of zone dir name to (type text or None, temp
+    text or None); None means the file is absent.
+    """
+    root = tmp_path / "sys" / "class" / "thermal"
+    root.mkdir(parents=True, exist_ok=True)
+    for zone, (type_text, temp_text) in zones.items():
+        zdir = root / zone
+        zdir.mkdir(exist_ok=True)
+        if type_text is not None:
+            (zdir / "type").write_text(type_text)
+        if temp_text is not None:
+            (zdir / "temp").write_text(temp_text)
+    return str(tmp_path / "sys" / "class" / "thermal")
+
+
+def test_temperature_fake_sys(client, tmp_path, monkeypatch):
+    thermal = _fake_thermal(tmp_path, {
+        "thermal_zone0": ("x86_pkg_temp\n", "45100\n"),
+        "thermal_zone1": ("acpitz\n", "27800\n"),
+    })
+    monkeypatch.setattr(server, "THERMAL_DIR", thermal)
+    r = client.get("/temperature", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 2
+    assert body["zones"] == [
+        {"zone": "thermal_zone0", "name": "x86_pkg_temp", "temp_c": 45.1},
+        {"zone": "thermal_zone1", "name": "acpitz", "temp_c": 27.8},
+    ]
+    assert body["hottest"] == body["zones"][0]
+
+
+def test_temperature_no_sys_yields_empty(client, monkeypatch):
+    monkeypatch.setattr(server, "THERMAL_DIR", "/nonexistent-thermal-dir")
+    r = client.get("/temperature", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 0
+    assert body["zones"] == []
+    assert body["hottest"] is None
+
+
+def test_temperature_bad_zone_skipped(client, tmp_path, monkeypatch):
+    thermal = _fake_thermal(tmp_path, {
+        "thermal_zone0": ("x86_pkg_temp\n", "45100\n"),
+        # Non-numeric temp: skipped, not fatal.
+        "thermal_zone1": ("acpitz\n", "hot\n"),
+        # Missing temp file: skipped.
+        "thermal_zone2": ("fan\n", None),
+        # Missing type file: falls back to the zone dir name.
+        "thermal_zone3": (None, "30000\n"),
+        # Not a zone dir at all: ignored.
+        "cooling_device0": ("Processor\n", "0\n"),
+    })
+    monkeypatch.setattr(server, "THERMAL_DIR", thermal)
+    r = client.get("/temperature", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 2
+    assert body["zones"] == [
+        {"zone": "thermal_zone0", "name": "x86_pkg_temp", "temp_c": 45.1},
+        {"zone": "thermal_zone3", "name": "thermal_zone3", "temp_c": 30.0},
+    ]
+    assert body["hottest"]["zone"] == "thermal_zone0"
+
+
+def test_temperature_zones_sorted_numeric(client, tmp_path, monkeypatch):
+    thermal = _fake_thermal(tmp_path, {
+        "thermal_zone10": ("z10\n", "40000\n"),
+        "thermal_zone2": ("z2\n", "41000\n"),
+    })
+    monkeypatch.setattr(server, "THERMAL_DIR", thermal)
+    r = client.get("/temperature", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    # Numeric order, not lexicographic: zone2 before zone10.
+    assert [z["zone"] for z in body["zones"]] == [
+        "thermal_zone2", "thermal_zone10",
+    ]
+    assert body["hottest"]["zone"] == "thermal_zone2"

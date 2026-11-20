@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.32.0 — 2026-11-20
+- New `GET /temperature` endpoint (auth required, read-only): thermal zone temperatures from `/sys/class/thermal` (zone name, sensor type, temp in degrees C from millidegree `temp` files, rounded to one decimal), plus `hottest`, the warmest zone; empty list where the host has no thermal zones, malformed zones skipped, missing type falls back to the zone directory name. The phone app lists the zones in the activity view, naming the hottest one.
+
 ## 1.31.0 — 2026-11-20
 - New `GET /memory` endpoint (auth required, read-only): full memory breakdown from `/proc/meminfo` (total, free, available, buffers, cached, swap total/free, used bytes and used_pct for memory and swap; used is total minus available, matching `/system`). All fields null where `/proc/meminfo` is absent or lacks MemTotal; MemAvailable falls back to MemFree, buffers/cached/swap default to 0 where absent, swap_used_pct null with no swap. The phone app shows memory and swap cards in the activity view, plus a swap card in the stats strip where the host has swap.
 
