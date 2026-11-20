@@ -3145,3 +3145,139 @@ def test_cpu_missing_cpuinfo(client, tmp_path, monkeypatch):
     assert body["cores"] == 0
     assert body["overall"]["total"] == 1000
     assert body["count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# memory
+# ---------------------------------------------------------------------------
+
+def test_memory_requires_auth(client):
+    r = client.get("/memory")
+    assert r.status_code == 401
+    r = client.get("/memory", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_memory_snapshot(client):
+    r = client.get("/memory", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert isinstance(body["host"], str) and body["host"]
+    # This Linux box has real memory figures.
+    assert isinstance(body["total_bytes"], int) and body["total_bytes"] > 0
+    assert 0 <= body["free_bytes"] <= body["total_bytes"]
+    assert 0 <= body["available_bytes"] <= body["total_bytes"]
+    assert body["used_bytes"] == body["total_bytes"] - body["available_bytes"]
+    assert 0.0 <= body["used_pct"] <= 100.0
+    assert body["buffers_bytes"] >= 0
+    assert body["cached_bytes"] >= 0
+    assert body["swap_total_bytes"] >= 0
+    assert 0 <= body["swap_free_bytes"] <= body["swap_total_bytes"]
+    assert body["swap_used_bytes"] == (
+        body["swap_total_bytes"] - body["swap_free_bytes"]
+    )
+    if body["swap_total_bytes"]:
+        assert 0.0 <= body["swap_used_pct"] <= 100.0
+    else:
+        assert body["swap_used_pct"] is None
+
+
+_FAKE_MEMINFO = (
+    "MemTotal:       8000000 kB\n"
+    "MemFree:        2000000 kB\n"
+    "MemAvailable:   4000000 kB\n"
+    "Buffers:         500000 kB\n"
+    "Cached:         1500000 kB\n"
+    "SwapTotal:      2000000 kB\n"
+    "SwapFree:       1500000 kB\n"
+)
+
+
+def _fake_proc_meminfo(tmp_path, meminfo=_FAKE_MEMINFO):
+    """Build a fake /proc tree with a meminfo file."""
+    root = tmp_path / "proc"
+    root.mkdir(parents=True, exist_ok=True)
+    if meminfo is not None:
+        (root / "meminfo").write_text(meminfo)
+    return root
+
+
+def test_memory_fake_proc(client, tmp_path, monkeypatch):
+    root = _fake_proc_meminfo(tmp_path)
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/memory", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_bytes"] == 8000000 * 1024
+    assert body["free_bytes"] == 2000000 * 1024
+    assert body["available_bytes"] == 4000000 * 1024
+    assert body["used_bytes"] == 4000000 * 1024
+    assert body["used_pct"] == 50.0
+    assert body["buffers_bytes"] == 500000 * 1024
+    assert body["cached_bytes"] == 1500000 * 1024
+    assert body["swap_total_bytes"] == 2000000 * 1024
+    assert body["swap_free_bytes"] == 1500000 * 1024
+    assert body["swap_used_bytes"] == 500000 * 1024
+    assert body["swap_used_pct"] == 25.0
+
+
+def test_memory_no_proc_yields_nulls(client, monkeypatch):
+    monkeypatch.setattr(server, "PROC_DIR", "/nonexistent-proc-dir")
+    r = client.get("/memory", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    for key in (
+        "total_bytes", "free_bytes", "available_bytes", "used_bytes",
+        "used_pct", "buffers_bytes", "cached_bytes", "swap_total_bytes",
+        "swap_free_bytes", "swap_used_bytes", "swap_used_pct",
+    ):
+        assert body[key] is None
+
+
+def test_memory_no_memtotal_yields_nulls(client, tmp_path, monkeypatch):
+    root = _fake_proc_meminfo(tmp_path, meminfo="MemFree: 1000 kB\n")
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/memory", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_bytes"] is None
+    assert body["used_pct"] is None
+
+
+def test_memory_missing_lines_default(client, tmp_path, monkeypatch):
+    # Old kernels may lack MemAvailable and swap lines entirely.
+    meminfo = "MemTotal: 4000000 kB\nMemFree: 1000000 kB\n"
+    root = _fake_proc_meminfo(tmp_path, meminfo=meminfo)
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/memory", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_bytes"] == 4000000 * 1024
+    # No MemAvailable: falls back to MemFree.
+    assert body["available_bytes"] == 1000000 * 1024
+    assert body["used_bytes"] == 3000000 * 1024
+    assert body["used_pct"] == 75.0
+    assert body["buffers_bytes"] == 0
+    assert body["cached_bytes"] == 0
+    assert body["swap_total_bytes"] == 0
+    assert body["swap_used_pct"] is None
+
+
+def test_memory_malformed_value_skipped(client, tmp_path, monkeypatch):
+    meminfo = (
+        "MemTotal: 8000000 kB\n"
+        "MemFree: not-a-number kB\n"
+        "MemAvailable: 4000000 kB\n"
+    )
+    root = _fake_proc_meminfo(tmp_path, meminfo=meminfo)
+    monkeypatch.setattr(server, "PROC_DIR", str(root))
+    r = client.get("/memory", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_bytes"] == 8000000 * 1024
+    # Bad MemFree is skipped, not fatal; it defaults to 0.
+    assert body["free_bytes"] == 0
+    assert body["used_pct"] == 50.0

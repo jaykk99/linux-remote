@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.31.0 — 2026-11-20
+- New `GET /memory` endpoint (auth required, read-only): full memory breakdown from `/proc/meminfo` (total, free, available, buffers, cached, swap total/free, used bytes and used_pct for memory and swap; used is total minus available, matching `/system`). All fields null where `/proc/meminfo` is absent or lacks MemTotal; MemAvailable falls back to MemFree, buffers/cached/swap default to 0 where absent, swap_used_pct null with no swap. The phone app shows memory and swap cards in the activity view, plus a swap card in the stats strip where the host has swap.
+
 ## 1.30.0 — 2026-11-19
 - New `GET /cpu` endpoint (auth required, read-only): CPU model name, core count, and clock from `/proc/cpuinfo`, plus the aggregate and per-core CPU time counters from `/proc/stat` (user, nice, system, idle, iowait, irq, softirq, steal, total ticks) with `usage_pct`, the share of time spent working since boot (idle counts idle + iowait; a zero total is 0.0). Identity fields are null/0 where `/proc/cpuinfo` is absent; overall is null and the list empty where `/proc/stat` has no usable cpu line; malformed core rows are skipped, short rows pad missing fields to 0. The phone app shows overall CPU usage as a card in the activity view and lists per-core usage under the services list.
 

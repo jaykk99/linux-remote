@@ -59,7 +59,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.30.0"
+VERSION = "1.31.0"
 
 
 # ---------------------------------------------------------------------------
@@ -6106,6 +6106,100 @@ def cpu_info(request: Request, x_api_key: str = Header(default="")):
         "overall": cpu["overall"],
         "count": len(cpu["cpus"]),
         "cpus": cpu["cpus"],
+    }
+
+
+@app.get("/memory")
+def memory_info(request: Request, x_api_key: str = Header(default="")):
+    """Full memory breakdown. Auth required, read-only.
+
+    Totals from /proc/meminfo: total, free, available, buffers,
+    and cached memory, plus swap total/free, with used bytes and
+    used_pct (total minus available, matching /system) and the
+    same for swap. All fields are null where /proc/meminfo is
+    absent or lacks MemTotal; buffers/cached/swap default to 0
+    where their lines are absent; swap_used_pct is null where
+    there is no swap. Nothing here runs a command.
+    """
+    require_key(request, x_api_key)
+    mem = _read_meminfo_full()
+    if mem is None:
+        return {
+            "ok": True,
+            "service": "linux-remote",
+            "version": VERSION,
+            "host": socket.gethostname(),
+            "total_bytes": None,
+            "free_bytes": None,
+            "available_bytes": None,
+            "used_bytes": None,
+            "used_pct": None,
+            "buffers_bytes": None,
+            "cached_bytes": None,
+            "swap_total_bytes": None,
+            "swap_free_bytes": None,
+            "swap_used_bytes": None,
+            "swap_used_pct": None,
+        }
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "host": socket.gethostname(),
+        **mem,
+    }
+
+
+def _read_meminfo_full() -> Optional[dict]:
+    """Full memory breakdown from /proc/meminfo (Linux only).
+
+    Returns total/free/available/buffers/cached bytes and swap
+    total/free bytes, with used bytes and used_pct (total minus
+    available, matching /system) and the same for swap. None when
+    the file is missing or unreadable, or lacks MemTotal; a
+    missing MemAvailable falls back to MemFree, and absent
+    buffers/cached/swap lines default to 0. A malformed value is
+    skipped, not fatal. Nothing here runs a command.
+    """
+    fields: dict[str, int] = {}
+    try:
+        with open(os.path.join(PROC_DIR, "meminfo")) as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2 and parts[0].endswith(":"):
+                    try:
+                        fields[parts[0][:-1]] = int(parts[1])
+                    except ValueError:
+                        continue
+    except OSError:
+        return None
+    if "MemTotal" not in fields:
+        return None
+    total = fields["MemTotal"] * 1024
+    free = fields.get("MemFree", 0) * 1024
+    available = fields.get("MemAvailable", fields.get("MemFree", 0)) * 1024
+    buffers = fields.get("Buffers", 0) * 1024
+    cached = fields.get("Cached", 0) * 1024
+    swap_total = fields.get("SwapTotal", 0) * 1024
+    swap_free = fields.get("SwapFree", 0) * 1024
+    swap_used = swap_total - swap_free
+    return {
+        "total_bytes": total,
+        "free_bytes": free,
+        "available_bytes": available,
+        "used_bytes": total - available,
+        "used_pct": (
+            round(100 * (1 - available / total), 1) if total else None
+        ),
+        "buffers_bytes": buffers,
+        "cached_bytes": cached,
+        "swap_total_bytes": swap_total,
+        "swap_free_bytes": swap_free,
+        "swap_used_bytes": swap_used,
+        "swap_used_pct": (
+            round(100 * (1 - swap_free / swap_total), 1)
+            if swap_total else None
+        ),
     }
 
 

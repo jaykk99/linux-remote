@@ -414,11 +414,11 @@
     padding: 2px 16px 12px; scrollbar-width: none;
   }
   #actstats::-webkit-scrollbar { display: none; }
-  #actprocs, #actnet, #actdisk, #actservices, #actcpu {
+  #actprocs, #actnet, #actdisk, #actservices, #actcpu, #actmemory, #acttemp {
     flex-shrink: 0; padding: 0 16px 12px;
     display: flex; flex-direction: column; gap: 8px;
   }
-  #actprocs .label, #actnet .label, #actdisk .label, #actservices .label, #actcpu .label {
+  #actprocs .label, #actnet .label, #actdisk .label, #actservices .label, #actcpu .label, #actmemory .label, #acttemp .label {
     font-size: 11px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 1.4px; color: var(--text3);
   }
@@ -562,6 +562,8 @@
     <div id="actdisk"></div>
     <div id="actservices"></div>
     <div id="actcpu"></div>
+    <div id="actmemory"></div>
+    <div id="acttemp"></div>
     <div id="actlist"></div>
   </div>
 
@@ -1097,6 +1099,18 @@ async function loadActStats() {
         box.appendChild(statCard(s.overall.usage_pct + "%", "cpu"));
     }
   } catch (e) { /* cpu card is best-effort */ }
+  // Swap usage from /memory, same strip. Best-effort: older
+  // servers (no /memory yet) just show the cards above. Only
+  // shown where the host has swap at all.
+  try {
+    const r = await fetch(base + "/memory", { headers: { "X-API-Key": key } });
+    if (r.ok) {
+      const s = await r.json();
+      if (s && s.ok === true && typeof s.swap_total_bytes === "number"
+          && s.swap_total_bytes > 0 && typeof s.swap_used_pct === "number")
+        box.appendChild(statCard(s.swap_used_pct + "%", "swap"));
+    }
+  } catch (e) { /* swap card is best-effort */ }
   // Host snapshot from /system, same strip. Best-effort too: older
   // servers (no /system yet) just show the stats cards above.
   try {
@@ -1122,6 +1136,7 @@ async function openActivity() {
   loadActDisk();
   loadActServices();
   loadActCPU();
+  loadActMemory();
   const list = $("actlist");
   list.innerHTML = '<div class="hint" style="margin-top:24px;">Loading…</div>';
   const base = baseUrl(), key = keyEl.value.trim();
@@ -1331,6 +1346,55 @@ async function loadActCPU() {
       box.appendChild(card);
     });
   } catch (e) { /* cpu is best-effort */ }
+}
+
+// Memory breakdown from /memory, under the CPU list.
+// Best-effort: older servers (no /memory yet) just show nothing.
+async function loadActMemory() {
+  const box = $("actmemory");
+  box.innerHTML = "";
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) return;
+  try {
+    const r = await fetch(base + "/memory", { headers: { "X-API-Key": key } });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d || typeof d.total_bytes !== "number") return;
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = "Memory \u00b7 " + d.used_pct + "% used of "
+      + fmtBytes(d.total_bytes);
+    box.appendChild(label);
+    const card = document.createElement("div");
+    card.className = "actcard";
+    const name = document.createElement("div");
+    name.className = "acmd";
+    name.textContent = "used " + fmtBytes(d.used_bytes)
+      + " \u00b7 free " + fmtBytes(d.free_bytes);
+    const meta = document.createElement("div");
+    meta.className = "ameta";
+    meta.textContent = "available " + fmtBytes(d.available_bytes)
+      + " \u00b7 buffers " + fmtBytes(d.buffers_bytes)
+      + " \u00b7 cached " + fmtBytes(d.cached_bytes);
+    card.appendChild(name);
+    card.appendChild(meta);
+    box.appendChild(card);
+    if (typeof d.swap_total_bytes === "number" && d.swap_total_bytes > 0) {
+      const swap = document.createElement("div");
+      swap.className = "actcard";
+      const sname = document.createElement("div");
+      sname.className = "acmd";
+      sname.textContent = "swap " + d.swap_used_pct + "% used of "
+        + fmtBytes(d.swap_total_bytes);
+      const smeta = document.createElement("div");
+      smeta.className = "ameta";
+      smeta.textContent = "used " + fmtBytes(d.swap_used_bytes)
+        + " \u00b7 free " + fmtBytes(d.swap_free_bytes);
+      swap.appendChild(sname);
+      swap.appendChild(smeta);
+      box.appendChild(swap);
+    }
+  } catch (e) { /* memory is best-effort */ }
 }
 
 function activityCard(line) {

@@ -126,6 +126,16 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   overall is null and the list empty where `/proc/stat` has no
   usable cpu line. The phone app shows overall CPU usage as a card
   and lists per-core usage in the activity view.
+- `GET /memory` - header `X-API-Key: <key>`, read-only memory
+  breakdown: total, free, available, buffers, and cached bytes
+  from `/proc/meminfo`, plus swap total/free, with used bytes and
+  `used_pct` (total minus available, matching `/system`) and the
+  same for swap. All fields are null on hosts without
+  `/proc/meminfo` or without a MemTotal line; buffers, cached,
+  and swap default to 0 where their lines are absent, and
+  `swap_used_pct` is null where there is no swap. The phone app
+  shows memory and swap cards in the activity view, and a swap
+  card in the stats strip where the host has swap.
 
 ## Configuration (env vars)
 
