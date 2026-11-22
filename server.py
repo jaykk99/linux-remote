@@ -59,7 +59,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.32.0"
+VERSION = "1.33.0"
 
 
 # ---------------------------------------------------------------------------
@@ -5352,6 +5352,9 @@ CGROUP_ROOT = "/sys/fs/cgroup"
 # Thermal zone root, overridable in tests with a fake sys tree.
 THERMAL_DIR = "/sys/class/thermal"
 
+# Power supply root, overridable in tests with a fake sys tree.
+POWER_SUPPLY_DIR = "/sys/class/power_supply"
+
 
 def _read_processes() -> list[dict]:
     """One snapshot row per process, from /proc (Linux only).
@@ -6272,6 +6275,178 @@ def temperature_info(request: Request, x_api_key: str = Header(default="")):
         "count": len(zones),
         "hottest": hottest,
         "zones": zones,
+    }
+
+
+def _read_ps_text(supply_dir: str, name: str) -> Optional[str]:
+    """One stripped line from a power-supply sysfs file, or None.
+
+    None where the file is missing, unreadable, or blank. Used for
+    text fields (status, technology, manufacturer, model).
+    """
+    try:
+        with open(os.path.join(supply_dir, name)) as f:
+            text = f.read().strip()
+    except OSError:
+        return None
+    return text or None
+
+
+def _read_ps_int(supply_dir: str, name: str) -> Optional[int]:
+    """One integer from a power-supply sysfs file, or None.
+
+    None where the file is missing, unreadable, or non-numeric.
+    A malformed value never takes the whole battery down.
+    """
+    try:
+        with open(os.path.join(supply_dir, name)) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _battery_sort_key(name: str) -> tuple:
+    """Sort batteries numerically on a BAT<n> suffix, else by name.
+
+    BAT2 sorts before BAT10; a non-BAT name (some laptops expose
+    `battery` or a HID++ name) sorts after the BAT<n> entries, by
+    name, so the order is stable either way.
+    """
+    if name.startswith("BAT") and name[3:].isdigit():
+        return (0, int(name[3:]), name)
+    return (1, 0, name)
+
+
+def _read_batteries() -> list[dict]:
+    """Battery rows from /sys/class/power_supply.
+
+    One row per power supply whose `type` file reads `Battery`
+    (AC adapters, USB supplies, and anything else are skipped).
+    A supply with no readable `type` file is treated as a battery
+    only when its directory name starts with `BAT`, the kernel
+    naming for built-in batteries. Each row carries the charge
+    status, capacity percent, present flag, voltage/current/power
+    in volts/amps/watts, energy in watt-hours (charge in amp-hours
+    where the battery reports charge instead of energy), the
+    technology, cycle count, and manufacturer/model where the
+    kernel reports them. A missing or malformed file yields None
+    for that field, never a skipped battery: a battery that
+    reports no capacity file still shows up with capacity_pct
+    null. An absent power-supply directory yields an empty list,
+    which is the honest no-battery state for desktops, VMs, and
+    containers, not an error. Nothing here runs a command.
+    """
+    try:
+        entries = os.listdir(POWER_SUPPLY_DIR)
+    except OSError:
+        return []
+    batteries: list[dict] = []
+    for entry in entries:
+        supply_dir = os.path.join(POWER_SUPPLY_DIR, entry)
+        if not os.path.isdir(supply_dir):
+            continue
+        supply_type = _read_ps_text(supply_dir, "type")
+        if supply_type is not None:
+            if supply_type != "Battery":
+                continue
+        elif not entry.startswith("BAT"):
+            continue
+        capacity = _read_ps_int(supply_dir, "capacity")
+        if capacity is not None and not 0 <= capacity <= 100:
+            capacity = None
+        present = _read_ps_int(supply_dir, "present")
+        voltage_now = _read_ps_int(supply_dir, "voltage_now")
+        current_now = _read_ps_int(supply_dir, "current_now")
+        power_now = _read_ps_int(supply_dir, "power_now")
+        energy_now = _read_ps_int(supply_dir, "energy_now")
+        energy_full = _read_ps_int(supply_dir, "energy_full")
+        energy_full_design = _read_ps_int(
+            supply_dir, "energy_full_design"
+        )
+        charge_now = _read_ps_int(supply_dir, "charge_now")
+        charge_full = _read_ps_int(supply_dir, "charge_full")
+        cycle_count = _read_ps_int(supply_dir, "cycle_count")
+        batteries.append({
+            "name": entry,
+            "status": _read_ps_text(supply_dir, "status"),
+            "capacity_pct": capacity,
+            "present": True if present is None else present != 0,
+            "voltage_v": (
+                round(voltage_now / 1_000_000, 2)
+                if voltage_now is not None else None
+            ),
+            "current_a": (
+                round(current_now / 1_000_000, 2)
+                if current_now is not None else None
+            ),
+            "power_w": (
+                round(power_now / 1_000_000, 2)
+                if power_now is not None else None
+            ),
+            "energy_now_wh": (
+                round(energy_now / 1_000_000, 2)
+                if energy_now is not None else None
+            ),
+            "energy_full_wh": (
+                round(energy_full / 1_000_000, 2)
+                if energy_full is not None else None
+            ),
+            "energy_full_design_wh": (
+                round(energy_full_design / 1_000_000, 2)
+                if energy_full_design is not None else None
+            ),
+            "charge_now_ah": (
+                round(charge_now / 1_000_000, 2)
+                if charge_now is not None else None
+            ),
+            "charge_full_ah": (
+                round(charge_full / 1_000_000, 2)
+                if charge_full is not None else None
+            ),
+            "technology": _read_ps_text(supply_dir, "technology"),
+            "cycle_count": cycle_count,
+            "manufacturer": _read_ps_text(supply_dir, "manufacturer"),
+            "model": _read_ps_text(supply_dir, "model_name"),
+        })
+    batteries.sort(key=lambda b: _battery_sort_key(b["name"]))
+    return batteries
+
+
+@app.get("/battery")
+def battery_info(request: Request, x_api_key: str = Header(default="")):
+    """Battery charge state. Auth required, read-only.
+
+    One row per battery from /sys/class/power_supply: status,
+    capacity percent, present flag, voltage/current/power, energy
+    (or charge) now and full, technology, cycle count, and
+    manufacturer/model. `available` is true when at least one
+    battery is present; `lowest` is the present battery with the
+    lowest reported capacity (null where no present battery
+    reports one). On hosts with no battery at all (desktops, VMs,
+    containers) the list is empty, `available` is false, and
+    `lowest` is null: an honest no-battery state, not an error.
+    Nothing here runs a command.
+    """
+    require_key(request, x_api_key)
+    batteries = _read_batteries()
+    present = [b for b in batteries if b["present"]]
+    available = bool(present)
+    with_capacity = [
+        b for b in present if b["capacity_pct"] is not None
+    ]
+    lowest = (
+        min(with_capacity, key=lambda b: b["capacity_pct"])
+        if with_capacity else None
+    )
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "host": socket.gethostname(),
+        "available": available,
+        "count": len(batteries),
+        "lowest": lowest,
+        "batteries": batteries,
     }
 
 

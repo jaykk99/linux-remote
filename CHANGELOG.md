@@ -5,6 +5,9 @@ the commit that shipped the version. The denylist only ever gets
 stronger: a version never re-allows a command an earlier version
 blocked.
 
+## 1.33.0 — 2026-11-22
+- New `GET /battery` endpoint (auth required, read-only): battery charge state from `/sys/class/power_supply` (status, capacity percent, present flag, voltage/current/power, energy now/full in Wh or charge now/full in Ah where the battery reports charge instead of energy, technology, cycle count, manufacturer/model), plus `available`, true when at least one battery is present, and `lowest`, the present battery with the lowest reported capacity; AC adapters and other non-battery supplies are skipped, a missing or malformed file yields null for that field, a missing `type` file falls back to the `BAT` directory name, and out-of-range capacity is treated as null. On hosts with no battery at all (desktops, VMs, containers) the list is empty, `available` is false, and `lowest` is null: an honest no-battery state, not an error. The phone app shows the lowest charge as a card in the stats strip and lists the batteries in the activity view, saying so where the host has no battery.
+
 ## 1.32.0 — 2026-11-20
 - New `GET /temperature` endpoint (auth required, read-only): thermal zone temperatures from `/sys/class/thermal` (zone name, sensor type, temp in degrees C from millidegree `temp` files, rounded to one decimal), plus `hottest`, the warmest zone; empty list where the host has no thermal zones, malformed zones skipped, missing type falls back to the zone directory name. The phone app lists the zones in the activity view, naming the hottest one.
 

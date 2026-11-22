@@ -143,6 +143,20 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   millidegrees), plus `hottest`, the warmest zone. The list is
   empty on hosts without thermal zones. The phone app lists the
   zones in the activity view, naming the hottest one.
+- `GET /battery` - header `X-API-Key: <key>`, read-only battery
+  charge state: one row per battery under `/sys/class/power_supply`
+  (status, capacity percent, present flag, voltage/current/power,
+  energy now and full in Wh, or charge now and full in Ah where
+  the battery reports charge instead of energy, technology, cycle
+  count, manufacturer/model), plus `available`, true when at
+  least one battery is present, and `lowest`, the present battery
+  with the lowest reported capacity. AC adapters and other
+  non-battery supplies are skipped. On hosts with no battery at
+  all the list is empty, `available` is false, and `lowest` is
+  null: an honest no-battery state, not an error. The phone app
+  shows the lowest charge as a card in the stats strip and lists
+  the batteries in the activity view, saying so where the host
+  has no battery.
 
 ## Configuration (env vars)
 

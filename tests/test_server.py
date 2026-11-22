@@ -3400,3 +3400,252 @@ def test_temperature_zones_sorted_numeric(client, tmp_path, monkeypatch):
         "thermal_zone2", "thermal_zone10",
     ]
     assert body["hottest"]["zone"] == "thermal_zone2"
+
+
+# ---------------------------------------------------------------------------
+# battery
+# ---------------------------------------------------------------------------
+
+def test_battery_requires_auth(client):
+    r = client.get("/battery")
+    assert r.status_code == 401
+    r = client.get("/battery", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_battery_snapshot(client):
+    r = client.get("/battery", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert isinstance(body["host"], str) and body["host"]
+    # This VM has no /sys/class/power_supply at all: the honest
+    # no-battery state is an empty list, available false, and no
+    # lowest battery, not an error.
+    assert body["count"] == len(body["batteries"])
+    if body["batteries"]:
+        assert body["available"] is True
+        present = [b for b in body["batteries"] if b["present"]]
+        assert present
+    else:
+        assert body["available"] is False
+        assert body["lowest"] is None
+    for b in body["batteries"]:
+        assert isinstance(b["name"], str) and b["name"]
+        assert b["capacity_pct"] is None or 0 <= b["capacity_pct"] <= 100
+        assert isinstance(b["present"], bool)
+
+
+def _fake_power_supply(tmp_path, supplies):
+    """Build a fake /sys/class/power_supply tree.
+
+    supplies: mapping of supply dir name to {file: text or None};
+    None means the file is absent.
+    """
+    root = tmp_path / "sys" / "class" / "power_supply"
+    root.mkdir(parents=True, exist_ok=True)
+    for supply, files in supplies.items():
+        sdir = root / supply
+        sdir.mkdir(exist_ok=True)
+        for name, text in files.items():
+            if text is not None:
+                (sdir / name).write_text(text)
+    return str(tmp_path / "sys" / "class" / "power_supply")
+
+
+def _battery_row(name, **overrides):
+    """Full expected row for a fake battery, fields defaulting None."""
+    row = {
+        "name": name,
+        "status": None,
+        "capacity_pct": None,
+        "present": True,
+        "voltage_v": None,
+        "current_a": None,
+        "power_w": None,
+        "energy_now_wh": None,
+        "energy_full_wh": None,
+        "energy_full_design_wh": None,
+        "charge_now_ah": None,
+        "charge_full_ah": None,
+        "technology": None,
+        "cycle_count": None,
+        "manufacturer": None,
+        "model": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_battery_fake_sys(client, tmp_path, monkeypatch):
+    power = _fake_power_supply(tmp_path, {
+        "BAT0": {
+            "type": "Battery\n",
+            "status": "Discharging\n",
+            "capacity": "82\n",
+            "present": "1\n",
+            "voltage_now": "11400000\n",
+            "current_now": "1500000\n",
+            "power_now": "17100000\n",
+            "energy_now": "42000000\n",
+            "energy_full": "51000000\n",
+            "energy_full_design": "55000000\n",
+            "technology": "Li-ion\n",
+            "cycle_count": "123\n",
+            "manufacturer": "LGC\n",
+            "model_name": "L19M3PF7\n",
+        },
+        "BAT1": {
+            "type": "Battery\n",
+            "status": "Full\n",
+            "capacity": "100\n",
+            "present": "1\n",
+        },
+        # AC adapter: same tree, not a battery, skipped.
+        "AC": {
+            "type": "Mains\n",
+            "online": "1\n",
+        },
+    })
+    monkeypatch.setattr(server, "POWER_SUPPLY_DIR", power)
+    r = client.get("/battery", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    assert body["count"] == 2
+    assert body["batteries"] == [
+        _battery_row("BAT0",
+            status="Discharging", capacity_pct=82, present=True,
+            voltage_v=11.4, current_a=1.5, power_w=17.1,
+            energy_now_wh=42.0, energy_full_wh=51.0,
+            energy_full_design_wh=55.0, technology="Li-ion",
+            cycle_count=123, manufacturer="LGC", model="L19M3PF7"),
+        _battery_row("BAT1",
+            status="Full", capacity_pct=100, present=True),
+    ]
+    assert body["lowest"] == body["batteries"][0]
+
+
+def test_battery_no_sys_yields_empty(client, monkeypatch):
+    monkeypatch.setattr(server, "POWER_SUPPLY_DIR", "/nonexistent-power-dir")
+    r = client.get("/battery", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is False
+    assert body["count"] == 0
+    assert body["batteries"] == []
+    assert body["lowest"] is None
+
+
+def test_battery_bad_values_kept_not_skipped(client, tmp_path, monkeypatch):
+    power = _fake_power_supply(tmp_path, {
+        # Non-numeric capacity: field null, battery still listed.
+        "BAT0": {
+            "type": "Battery\n",
+            "status": "Charging\n",
+            "capacity": "full\n",
+            "present": "1\n",
+        },
+        # Missing capacity file entirely: null, not fatal.
+        "BAT1": {
+            "type": "Battery\n",
+            "status": "Unknown\n",
+            "present": "1\n",
+        },
+        # Out-of-range capacity: null, not trusted.
+        "BAT2": {
+            "type": "Battery\n",
+            "status": "Discharging\n",
+            "capacity": "140\n",
+            "present": "1\n",
+        },
+        # Type file missing but BAT name: still a battery.
+        "BAT3": {
+            "capacity": "50\n",
+            "present": "1\n",
+        },
+        # Type file missing and not a BAT name: not a battery.
+        "hidpp_battery_0": {
+            "capacity": "90\n",
+            "present": "1\n",
+        },
+    })
+    monkeypatch.setattr(server, "POWER_SUPPLY_DIR", power)
+    r = client.get("/battery", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    assert body["count"] == 4
+    assert body["batteries"] == [
+        _battery_row("BAT0", status="Charging", capacity_pct=None),
+        _battery_row("BAT1", status="Unknown", capacity_pct=None),
+        _battery_row("BAT2", status="Discharging", capacity_pct=None),
+        _battery_row("BAT3", capacity_pct=50),
+    ]
+    # Only BAT3 reports a capacity, so it is the lowest.
+    assert body["lowest"] == body["batteries"][3]
+
+
+def test_battery_absent_slot_not_available(client, tmp_path, monkeypatch):
+    power = _fake_power_supply(tmp_path, {
+        # Removable bay with no battery inserted.
+        "BAT0": {
+            "type": "Battery\n",
+            "status": "Unknown\n",
+            "capacity": "0\n",
+            "present": "0\n",
+        },
+    })
+    monkeypatch.setattr(server, "POWER_SUPPLY_DIR", power)
+    r = client.get("/battery", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 1
+    assert body["batteries"][0]["present"] is False
+    assert body["available"] is False
+    assert body["lowest"] is None
+
+
+def test_battery_charge_based_battery(client, tmp_path, monkeypatch):
+    # Some batteries report charge (uAh) instead of energy (uWh).
+    power = _fake_power_supply(tmp_path, {
+        "BAT0": {
+            "type": "Battery\n",
+            "status": "Discharging\n",
+            "capacity": "60\n",
+            "present": "1\n",
+            "charge_now": "3000000\n",
+            "charge_full": "5000000\n",
+            "voltage_now": "12000000\n",
+        },
+    })
+    monkeypatch.setattr(server, "POWER_SUPPLY_DIR", power)
+    r = client.get("/battery", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["batteries"] == [
+        _battery_row("BAT0",
+            status="Discharging", capacity_pct=60, present=True,
+            voltage_v=12.0, charge_now_ah=3.0, charge_full_ah=5.0),
+    ]
+    assert body["lowest"] == body["batteries"][0]
+
+
+def test_battery_sorted_numeric(client, tmp_path, monkeypatch):
+    power = _fake_power_supply(tmp_path, {
+        "BAT10": {"type": "Battery\n", "capacity": "10\n"},
+        "BAT2": {"type": "Battery\n", "capacity": "20\n"},
+        "battery": {"type": "Battery\n", "capacity": "30\n"},
+    })
+    monkeypatch.setattr(server, "POWER_SUPPLY_DIR", power)
+    r = client.get("/battery", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    # Numeric order, not lexicographic: BAT2 before BAT10, and a
+    # non-BAT name sorts after the BAT<n> entries.
+    assert [b["name"] for b in body["batteries"]] == [
+        "BAT2", "BAT10", "battery",
+    ]
+    assert body["lowest"]["name"] == "BAT10"

@@ -414,11 +414,11 @@
     padding: 2px 16px 12px; scrollbar-width: none;
   }
   #actstats::-webkit-scrollbar { display: none; }
-  #actprocs, #actnet, #actdisk, #actservices, #actcpu, #actmemory, #acttemp {
+  #actprocs, #actnet, #actdisk, #actservices, #actcpu, #actmemory, #acttemp, #actbattery {
     flex-shrink: 0; padding: 0 16px 12px;
     display: flex; flex-direction: column; gap: 8px;
   }
-  #actprocs .label, #actnet .label, #actdisk .label, #actservices .label, #actcpu .label, #actmemory .label, #acttemp .label {
+  #actprocs .label, #actnet .label, #actdisk .label, #actservices .label, #actcpu .label, #actmemory .label, #acttemp .label, #actbattery .label {
     font-size: 11px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 1.4px; color: var(--text3);
   }
@@ -564,6 +564,7 @@
     <div id="actcpu"></div>
     <div id="actmemory"></div>
     <div id="acttemp"></div>
+    <div id="actbattery"></div>
     <div id="actlist"></div>
   </div>
 
@@ -1111,6 +1112,20 @@ async function loadActStats() {
         box.appendChild(statCard(s.swap_used_pct + "%", "swap"));
     }
   } catch (e) { /* swap card is best-effort */ }
+  // Lowest battery charge from /battery, same strip. Best-effort:
+  // older servers (no /battery yet) just show the cards above.
+  // Only shown where a battery is present and reports a charge.
+  try {
+    const r = await fetch(base + "/battery", { headers: { "X-API-Key": key } });
+    if (r.ok) {
+      const s = await r.json();
+      if (s && s.ok === true && s.available === true && s.lowest
+          && typeof s.lowest.capacity_pct === "number")
+        box.appendChild(statCard(s.lowest.capacity_pct + "%"
+          + (s.lowest.status ? " " + s.lowest.status.toLowerCase() : ""),
+          "battery"));
+    }
+  } catch (e) { /* battery card is best-effort */ }
   // Host snapshot from /system, same strip. Best-effort too: older
   // servers (no /system yet) just show the stats cards above.
   try {
@@ -1138,6 +1153,7 @@ async function openActivity() {
   loadActCPU();
   loadActMemory();
   loadActTemp();
+  loadActBattery();
   const list = $("actlist");
   list.innerHTML = '<div class="hint" style="margin-top:24px;">Loading…</div>';
   const base = baseUrl(), key = keyEl.value.trim();
@@ -1432,6 +1448,71 @@ async function loadActTemp() {
       box.appendChild(card);
     });
   } catch (e) { /* temperature is best-effort */ }
+}
+
+// Battery charge state from /battery, under the temperature
+// list. Best-effort: older servers (no /battery yet) just show
+// nothing. Unlike the other lists, a host with no battery still
+// gets a line saying so: the no-battery state is the honest
+// answer for desktops, VMs, and containers, not a missing card.
+async function loadActBattery() {
+  const box = $("actbattery");
+  box.innerHTML = "";
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) return;
+  try {
+    const r = await fetch(base + "/battery", { headers: { "X-API-Key": key } });
+    if (!r.ok) return;
+    const d = await r.json();
+    const batteries = (d && d.batteries) || [];
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = "Battery"
+      + (d.lowest && typeof d.lowest.capacity_pct === "number"
+        ? " \u00b7 lowest " + d.lowest.name + " "
+          + d.lowest.capacity_pct + "%"
+          + (d.lowest.status ? " " + d.lowest.status.toLowerCase() : "")
+        : "");
+    box.appendChild(label);
+    if (!batteries.length) {
+      const card = document.createElement("div");
+      card.className = "actcard";
+      const name = document.createElement("div");
+      name.className = "acmd";
+      name.textContent = "No battery detected on this host";
+      card.appendChild(name);
+      box.appendChild(card);
+      return;
+    }
+    batteries.forEach(b => {
+      const card = document.createElement("div");
+      card.className = "actcard";
+      const name = document.createElement("div");
+      name.className = "acmd";
+      name.textContent = b.name
+        + (typeof b.capacity_pct === "number" ? " \u00b7 " + b.capacity_pct + "%" : "")
+        + (b.status ? " \u00b7 " + b.status : "")
+        + (b.present === false ? " \u00b7 not present" : "");
+      const meta = document.createElement("div");
+      meta.className = "ameta";
+      const bits = [];
+      if (typeof b.voltage_v === "number") bits.push(b.voltage_v + " V");
+      if (typeof b.power_w === "number") bits.push(b.power_w + " W");
+      if (typeof b.energy_now_wh === "number"
+          && typeof b.energy_full_wh === "number")
+        bits.push(b.energy_now_wh + " / " + b.energy_full_wh + " Wh");
+      if (typeof b.charge_now_ah === "number"
+          && typeof b.charge_full_ah === "number")
+        bits.push(b.charge_now_ah + " / " + b.charge_full_ah + " Ah");
+      if (b.technology) bits.push(b.technology);
+      if (typeof b.cycle_count === "number")
+        bits.push(b.cycle_count + " cycles");
+      meta.textContent = bits.join(" \u00b7 ") || "no readings reported";
+      card.appendChild(name);
+      card.appendChild(meta);
+      box.appendChild(card);
+    });
+  } catch (e) { /* battery is best-effort */ }
 }
 
 function activityCard(line) {
