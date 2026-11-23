@@ -3649,3 +3649,304 @@ def test_battery_sorted_numeric(client, tmp_path, monkeypatch):
         "BAT2", "BAT10", "battery",
     ]
     assert body["lowest"]["name"] == "BAT10"
+
+
+def test_gpu_requires_auth(client):
+    r = client.get("/gpu")
+    assert r.status_code == 401
+    r = client.get("/gpu", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_gpu_snapshot(client):
+    r = client.get("/gpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert isinstance(body["host"], str) and body["host"]
+    # This VM has /sys/class/drm but no card entries: the honest
+    # no-GPU state is an empty list and available false, not an
+    # error.
+    assert body["count"] == len(body["gpus"])
+    if body["gpus"]:
+        assert body["available"] is True
+    else:
+        assert body["available"] is False
+    for g in body["gpus"]:
+        assert isinstance(g["name"], str) and g["name"]
+        assert g["vendor"] in ("NVIDIA", "AMD", "Intel", "Unknown")
+        assert g["vram_total_bytes"] is None or g["vram_total_bytes"] >= 0
+
+
+def _fake_drm(tmp_path, cards):
+    """Build a fake /sys/class/drm tree.
+
+    cards: mapping of card dir name to a spec dict:
+      "pci": PCI address string,
+      "files": {file: text or None} written into the device dir;
+        None means the file is absent,
+      "driver": driver name, or None for no driver symlink.
+    The device dir is a real directory under a fake PCI tree and
+    the card's `device` entry is a symlink to it, the way real
+    sysfs links /sys/class/drm/card<n>/device at its PCI device.
+    """
+    drm_root = tmp_path / "sys" / "class" / "drm"
+    drm_root.mkdir(parents=True, exist_ok=True)
+    pci_root = tmp_path / "pci"
+    pci_root.mkdir(exist_ok=True)
+    for card, spec in cards.items():
+        dev = pci_root / spec["pci"]
+        dev.mkdir(exist_ok=True)
+        for name, text in spec.get("files", {}).items():
+            if text is not None:
+                (dev / name).write_text(text)
+        if spec.get("driver"):
+            os.symlink("/sys/bus/pci/drivers/" + spec["driver"],
+                       dev / "driver")
+        card_dir = drm_root / card
+        card_dir.mkdir(exist_ok=True)
+        os.symlink(str(dev), card_dir / "device")
+    return str(drm_root)
+
+
+def _fake_nvidia(tmp_path, gpus):
+    """Build a fake /proc/driver/nvidia/gpus tree.
+
+    gpus: mapping of PCI address to the text of its `information`
+    file.
+    """
+    root = tmp_path / "proc" / "driver" / "nvidia" / "gpus"
+    root.mkdir(parents=True, exist_ok=True)
+    for addr, text in gpus.items():
+        gdir = root / addr
+        gdir.mkdir(exist_ok=True)
+        (gdir / "information").write_text(text)
+    return str(root)
+
+
+def _gpu_row(name, **overrides):
+    """Full expected row for a fake GPU, fields defaulting None."""
+    row = {
+        "name": name,
+        "vendor": "Unknown",
+        "vendor_id": None,
+        "device_id": None,
+        "driver": None,
+        "vram_total_bytes": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_gpu_fake_sys(client, tmp_path, monkeypatch):
+    drm = _fake_drm(tmp_path, {
+        "card0": {
+            "pci": "0000:03:00.0",
+            "driver": "amdgpu",
+            "files": {
+                "vendor": "0x1002\n",
+                "device": "0x73ff\n",
+                "mem_info_vram_total": "8589934592\n",
+            },
+        },
+        "card1": {
+            "pci": "0000:01:00.0",
+            "driver": "nvidia",
+            "files": {
+                "vendor": "0x10de\n",
+                "device": "0x2206\n",
+            },
+        },
+        "card2": {
+            "pci": "0000:00:02.0",
+            "driver": "i915",
+            "files": {
+                "vendor": "0x8086\n",
+                "device": "0x9bc5\n",
+            },
+        },
+    })
+    nvidia = _fake_nvidia(tmp_path, {
+        "0000:01:00.0": (
+            "Model:           NVIDIA GeForce RTX 3080\n"
+            "IRQ:             123\n"
+            "Bus Location:    0000:01:00.0\n"
+            "Video Memory:      10240 MB\n"
+        ),
+    })
+    monkeypatch.setattr(server, "DRM_DIR", drm)
+    monkeypatch.setattr(server, "NVIDIA_PROC_DIR", nvidia)
+    r = client.get("/gpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    assert body["count"] == 3
+    assert body["gpus"] == [
+        _gpu_row("card0", vendor="AMD", vendor_id="0x1002",
+                 device_id="0x73ff", driver="amdgpu",
+                 vram_total_bytes=8589934592),
+        _gpu_row("card1", vendor="NVIDIA", vendor_id="0x10de",
+                 device_id="0x2206", driver="nvidia",
+                 vram_total_bytes=10240 * 1024 * 1024),
+        _gpu_row("card2", vendor="Intel", vendor_id="0x8086",
+                 device_id="0x9bc5", driver="i915",
+                 vram_total_bytes=None),
+    ]
+
+
+def test_gpu_no_sys_yields_empty(client, monkeypatch):
+    monkeypatch.setattr(server, "DRM_DIR", "/nonexistent-drm-dir")
+    r = client.get("/gpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is False
+    assert body["count"] == 0
+    assert body["gpus"] == []
+
+
+def test_gpu_non_card_entries_skipped(client, tmp_path, monkeypatch):
+    drm = _fake_drm(tmp_path, {
+        "card0": {
+            "pci": "0000:00:02.0",
+            "driver": "i915",
+            "files": {"vendor": "0x8086\n", "device": "0x9bc5\n"},
+        },
+    })
+    # render/control nodes, a connector symlink, and the plain
+    # version file all live in /sys/class/drm beside the cards.
+    drm_root = tmp_path / "sys" / "class" / "drm"
+    (drm_root / "renderD128").mkdir(exist_ok=True)
+    (drm_root / "controlD64").mkdir(exist_ok=True)
+    os.symlink(str(drm_root / "card0"), drm_root / "card0-HDMI-A-1")
+    (drm_root / "version").write_text("drm 1.1.0 20060810\n")
+    monkeypatch.setattr(server, "DRM_DIR", drm)
+    r = client.get("/gpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 1
+    assert body["gpus"][0]["name"] == "card0"
+
+
+def test_gpu_bad_values_kept_not_skipped(client, tmp_path, monkeypatch):
+    drm = _fake_drm(tmp_path, {
+        # Non-hex vendor: vendor Unknown, vendor_id null, card kept.
+        "card0": {
+            "pci": "0000:03:00.0",
+            "driver": "amdgpu",
+            "files": {
+                "vendor": "not-hex\n",
+                "device": "0x73ff\n",
+                "mem_info_vram_total": "8589934592\n",
+            },
+        },
+        # Malformed VRAM: null, not fatal.
+        "card1": {
+            "pci": "0000:04:00.0",
+            "driver": "amdgpu",
+            "files": {
+                "vendor": "0x1002\n",
+                "device": "0x73ff\n",
+                "mem_info_vram_total": "lots\n",
+            },
+        },
+        # No driver symlink: driver null, VRAM null, card kept.
+        "card2": {
+            "pci": "0000:05:00.0",
+            "driver": None,
+            "files": {"vendor": "0x10de\n", "device": "0x2206\n"},
+        },
+        # NVIDIA card with no proc info file: VRAM null, card kept.
+        "card3": {
+            "pci": "0000:01:00.0",
+            "driver": "nvidia",
+            "files": {"vendor": "0x10de\n", "device": "0x2206\n"},
+        },
+        # Unknown vendor ID: reported as Unknown with the raw ID.
+        "card4": {
+            "pci": "0000:06:00.0",
+            "driver": "vfio-pci",
+            "files": {"vendor": "0x1234\n", "device": "0x5678\n"},
+        },
+    })
+    monkeypatch.setattr(server, "DRM_DIR", drm)
+    monkeypatch.setattr(server, "NVIDIA_PROC_DIR",
+                        "/nonexistent-nvidia-dir")
+    r = client.get("/gpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    assert body["count"] == 5
+    assert body["gpus"] == [
+        _gpu_row("card0", vendor="Unknown", vendor_id=None,
+                 device_id="0x73ff", driver="amdgpu",
+                 vram_total_bytes=8589934592),
+        _gpu_row("card1", vendor="AMD", vendor_id="0x1002",
+                 device_id="0x73ff", driver="amdgpu",
+                 vram_total_bytes=None),
+        _gpu_row("card2", vendor="NVIDIA", vendor_id="0x10de",
+                 device_id="0x2206", driver=None,
+                 vram_total_bytes=None),
+        _gpu_row("card3", vendor="NVIDIA", vendor_id="0x10de",
+                 device_id="0x2206", driver="nvidia",
+                 vram_total_bytes=None),
+        _gpu_row("card4", vendor="Unknown", vendor_id="0x1234",
+                 device_id="0x5678", driver="vfio-pci",
+                 vram_total_bytes=None),
+    ]
+
+
+def test_gpu_nvidia_vram_without_video_memory_line(client, tmp_path,
+                                                   monkeypatch):
+    drm = _fake_drm(tmp_path, {
+        "card0": {
+            "pci": "0000:01:00.0",
+            "driver": "nvidia",
+            "files": {"vendor": "0x10de\n", "device": "0x2206\n"},
+        },
+    })
+    nvidia = _fake_nvidia(tmp_path, {
+        "0000:01:00.0": (
+            "Model:           NVIDIA GeForce RTX 3080\n"
+            "Bus Location:    0000:01:00.0\n"
+        ),
+    })
+    monkeypatch.setattr(server, "DRM_DIR", drm)
+    monkeypatch.setattr(server, "NVIDIA_PROC_DIR", nvidia)
+    r = client.get("/gpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["gpus"] == [
+        _gpu_row("card0", vendor="NVIDIA", vendor_id="0x10de",
+                 device_id="0x2206", driver="nvidia",
+                 vram_total_bytes=None),
+    ]
+
+
+def test_gpu_sorted_numeric(client, tmp_path, monkeypatch):
+    drm = _fake_drm(tmp_path, {
+        "card10": {
+            "pci": "0000:0a:00.0",
+            "driver": "i915",
+            "files": {"vendor": "0x8086\n", "device": "0x9bc5\n"},
+        },
+        "card2": {
+            "pci": "0000:02:00.0",
+            "driver": "i915",
+            "files": {"vendor": "0x8086\n", "device": "0x9bc5\n"},
+        },
+        "card0": {
+            "pci": "0000:00:02.0",
+            "driver": "i915",
+            "files": {"vendor": "0x8086\n", "device": "0x9bc5\n"},
+        },
+    })
+    monkeypatch.setattr(server, "DRM_DIR", drm)
+    r = client.get("/gpu", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    # Numeric order, not lexicographic: card2 before card10.
+    assert [g["name"] for g in body["gpus"]] == [
+        "card0", "card2", "card10",
+    ]

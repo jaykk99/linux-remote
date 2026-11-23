@@ -59,7 +59,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.33.0"
+VERSION = "1.34.0"
 
 
 # ---------------------------------------------------------------------------
@@ -5355,6 +5355,20 @@ THERMAL_DIR = "/sys/class/thermal"
 # Power supply root, overridable in tests with a fake sys tree.
 POWER_SUPPLY_DIR = "/sys/class/power_supply"
 
+# DRM root, overridable in tests with a fake sys tree.
+DRM_DIR = "/sys/class/drm"
+
+# NVIDIA proc root, overridable in tests with a fake proc tree.
+NVIDIA_PROC_DIR = "/proc/driver/nvidia/gpus"
+
+# PCI vendor IDs seen on GPUs, by the integer in the sysfs
+# `vendor` file. Anything else reports as "Unknown".
+GPU_VENDORS = {
+    0x10DE: "NVIDIA",
+    0x1002: "AMD",
+    0x8086: "Intel",
+}
+
 
 def _read_processes() -> list[dict]:
     """One snapshot row per process, from /proc (Linux only).
@@ -6447,6 +6461,182 @@ def battery_info(request: Request, x_api_key: str = Header(default="")):
         "count": len(batteries),
         "lowest": lowest,
         "batteries": batteries,
+    }
+
+
+def _read_gpu_hex(device_dir: str, name: str) -> tuple[Optional[str], Optional[int]]:
+    """A PCI ID from a sysfs file, as (raw hex string, int) or (None, None).
+
+    The file holds hex like `0x10de`. None where the file is
+    missing, unreadable, or not hex: a malformed ID never takes
+    the whole GPU down.
+    """
+    try:
+        with open(os.path.join(device_dir, name)) as f:
+            text = f.read().strip()
+    except OSError:
+        return None, None
+    try:
+        value = int(text, 16)
+    except ValueError:
+        return None, None
+    return text.lower(), value
+
+
+def _read_gpu_driver(device_dir: str) -> Optional[str]:
+    """Kernel driver name for a GPU, or None.
+
+    The `driver` entry inside the device directory is a symlink
+    to the driver's sysfs directory (e.g. `.../bus/pci/drivers/
+    amdgpu`); its basename is the driver name. None where the
+    symlink is missing or unreadable.
+    """
+    try:
+        target = os.readlink(os.path.join(device_dir, "driver"))
+    except OSError:
+        return None
+    name = os.path.basename(target.rstrip("/"))
+    return name or None
+
+
+def _read_gpu_pci_addr(device_dir: str) -> Optional[str]:
+    """PCI address of a GPU device directory, or None.
+
+    The device directory itself is a symlink into the PCI tree
+    (e.g. `.../devices/pci0000:00/0000:01:00.0`); its basename
+    is the address. None where the directory is not a symlink.
+    """
+    try:
+        target = os.readlink(device_dir)
+    except OSError:
+        return None
+    addr = os.path.basename(target.rstrip("/"))
+    return addr or None
+
+
+def _read_nvidia_vram(pci_addr: str) -> Optional[int]:
+    """VRAM in bytes for an NVIDIA GPU, from its proc info file, or None.
+
+    `/proc/driver/nvidia/gpus/<pci addr>/information` carries a
+    `Video Memory: <N> MB` line. None where the file is missing,
+    unreadable, or has no such line: a GPU the NVIDIA driver
+    does not report still shows up, just without a VRAM figure.
+    """
+    try:
+        with open(
+            os.path.join(NVIDIA_PROC_DIR, pci_addr, "information")
+        ) as f:
+            text = f.read()
+    except OSError:
+        return None
+    match = re.search(r"^Video Memory:\s*(\d+)\s*MB\s*$", text, re.M)
+    if not match:
+        return None
+    return int(match.group(1)) * 1024 * 1024
+
+
+def _gpu_sort_key(name: str) -> tuple:
+    """Sort GPUs numerically on a card<n> suffix, else by name.
+
+    card2 sorts before card10; a non-numeric name sorts after
+    the card<n> entries, by name, so the order is stable either
+    way. (The reader only keeps card<n> entries, so the fallback
+    is defensive.)
+    """
+    if name.startswith("card") and name[4:].isdigit():
+        return (0, int(name[4:]), name)
+    return (1, 0, name)
+
+
+def _read_gpus() -> list[dict]:
+    """GPU rows from /sys/class/drm.
+
+    One row per `card<n>` entry: the PCI vendor and device IDs
+    (hex, as read), the vendor name where the ID is known
+    (NVIDIA, AMD, Intel; anything else is "Unknown"), the kernel
+    driver name, and total VRAM in bytes. VRAM comes from
+    `mem_info_vram_total` where the driver reports it (amdgpu)
+    and from the NVIDIA proc info file where the driver is
+    NVIDIA; integrated GPUs report none, which is null, not
+    zero. Entries that are not GPUs are skipped: `renderD<n>`
+    and `controlD<n>` nodes, `card<n>-<connector>` symlinks,
+    and the plain `version` file all live in the same directory.
+    A missing or malformed file yields None for that field, never
+    a skipped GPU. An absent DRM directory yields an empty list,
+    which is the honest no-GPU state for VMs, containers, and
+    headless servers, not an error. Nothing here runs a command.
+    """
+    try:
+        entries = os.listdir(DRM_DIR)
+    except OSError:
+        return []
+    gpus: list[dict] = []
+    for entry in entries:
+        if not (entry.startswith("card") and entry[4:].isdigit()):
+            continue
+        card_dir = os.path.join(DRM_DIR, entry)
+        if not os.path.isdir(card_dir):
+            continue
+        device_dir = os.path.join(card_dir, "device")
+        if not os.path.isdir(device_dir):
+            continue
+        vendor_id, vendor_int = _read_gpu_hex(device_dir, "vendor")
+        device_id, _ = _read_gpu_hex(device_dir, "device")
+        vendor = (
+            GPU_VENDORS.get(vendor_int, "Unknown")
+            if vendor_int is not None else "Unknown"
+        )
+        driver = _read_gpu_driver(device_dir)
+        vram: Optional[int] = None
+        if driver == "amdgpu":
+            try:
+                with open(
+                    os.path.join(device_dir, "mem_info_vram_total")
+                ) as f:
+                    vram = int(f.read().strip())
+            except (OSError, ValueError):
+                vram = None
+            if vram is not None and vram < 0:
+                vram = None
+        elif driver == "nvidia":
+            pci_addr = _read_gpu_pci_addr(device_dir)
+            if pci_addr is not None:
+                vram = _read_nvidia_vram(pci_addr)
+        gpus.append({
+            "name": entry,
+            "vendor": vendor,
+            "vendor_id": vendor_id,
+            "device_id": device_id,
+            "driver": driver,
+            "vram_total_bytes": vram,
+        })
+    gpus.sort(key=lambda g: _gpu_sort_key(g["name"]))
+    return gpus
+
+
+@app.get("/gpu")
+def gpu_info(request: Request, x_api_key: str = Header(default="")):
+    """GPU inventory. Auth required, read-only.
+
+    One row per GPU from /sys/class/drm: PCI vendor/device IDs,
+    vendor name, kernel driver, and total VRAM in bytes where the
+    driver reports it (amdgpu, NVIDIA; integrated GPUs report
+    none). `available` is true when at least one GPU is found.
+    On hosts with no GPU at all (VMs, containers, headless
+    servers) the list is empty and `available` is false: an
+    honest no-GPU state, not an error. Nothing here runs a
+    command.
+    """
+    require_key(request, x_api_key)
+    gpus = _read_gpus()
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "host": socket.gethostname(),
+        "available": bool(gpus),
+        "count": len(gpus),
+        "gpus": gpus,
     }
 
 

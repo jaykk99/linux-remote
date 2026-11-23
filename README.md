@@ -157,6 +157,18 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   shows the lowest charge as a card in the stats strip and lists
   the batteries in the activity view, saying so where the host
   has no battery.
+- `GET /gpu` - header `X-API-Key: <key>`, read-only GPU
+  inventory: one row per `card<n>` under `/sys/class/drm`
+  (PCI vendor/device IDs, vendor name where the ID is known,
+  kernel driver name, and total VRAM in bytes where the driver
+  reports it: amdgpu `mem_info_vram_total`, or the NVIDIA proc
+  info `Video Memory` line; integrated GPUs report none, which
+  is null, not zero), plus `available`, true when at least one
+  GPU is found. Render/control nodes, connector symlinks, and
+  the `version` file are skipped. On hosts with no GPU at all
+  the list is empty and `available` is false: an honest no-GPU
+  state, not an error. The phone app lists the GPUs in the
+  activity view, saying so where the host has no GPU.
 
 ## Configuration (env vars)
 
