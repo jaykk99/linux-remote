@@ -414,11 +414,11 @@
     padding: 2px 16px 12px; scrollbar-width: none;
   }
   #actstats::-webkit-scrollbar { display: none; }
-  #actprocs, #actnet, #actdisk, #actservices, #actcpu, #actmemory, #acttemp, #actbattery, #actgpu {
+  #actprocs, #actnet, #actdisk, #actservices, #actcpu, #actmemory, #acttemp, #actbattery, #actgpu, #actfans {
     flex-shrink: 0; padding: 0 16px 12px;
     display: flex; flex-direction: column; gap: 8px;
   }
-  #actprocs .label, #actnet .label, #actdisk .label, #actservices .label, #actcpu .label, #actmemory .label, #acttemp .label, #actbattery .label, #actgpu .label {
+  #actprocs .label, #actnet .label, #actdisk .label, #actservices .label, #actcpu .label, #actmemory .label, #acttemp .label, #actbattery .label, #actgpu .label, #actfans .label {
     font-size: 11px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 1.4px; color: var(--text3);
   }
@@ -566,6 +566,7 @@
     <div id="acttemp"></div>
     <div id="actbattery"></div>
     <div id="actgpu"></div>
+    <div id="actfans"></div>
     <div id="actlist"></div>
   </div>
 
@@ -1156,6 +1157,7 @@ async function openActivity() {
   loadActTemp();
   loadActBattery();
   loadActGpu();
+  loadActFans();
   const list = $("actlist");
   list.innerHTML = '<div class="hint" style="margin-top:24px;">Loading…</div>';
   const base = baseUrl(), key = keyEl.value.trim();
@@ -1569,6 +1571,64 @@ async function loadActGpu() {
       box.appendChild(card);
     });
   } catch (e) { /* gpu is best-effort */ }
+}
+
+// Fan speeds from /fans, under the GPU list.
+// Best-effort: older servers (no /fans yet) just show nothing.
+// Like the GPU list, a host with no fans still gets a line
+// saying so: the no-fan state is the honest answer for VMs,
+// containers, and fanless hosts, not a missing card.
+async function loadActFans() {
+  const box = $("actfans");
+  box.innerHTML = "";
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) return;
+  try {
+    const r = await fetch(base + "/fans", { headers: { "X-API-Key": key } });
+    if (!r.ok) return;
+    const d = await r.json();
+    const fans = (d && d.fans) || [];
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = "Fans"
+      + (fans.length ? " \u00b7 " + fans.length : "");
+    box.appendChild(label);
+    if (!fans.length) {
+      const card = document.createElement("div");
+      card.className = "actcard";
+      const name = document.createElement("div");
+      name.className = "acmd";
+      name.textContent = "No fans detected on this host";
+      card.appendChild(name);
+      box.appendChild(card);
+      return;
+    }
+    fans.forEach(f => {
+      const card = document.createElement("div");
+      card.className = "actcard";
+      const name = document.createElement("div");
+      name.className = "acmd";
+      name.textContent = (f.label || f.name)
+        + (f.chip ? " \u00b7 " + f.chip : "")
+        + (typeof f.rpm === "number" ? " \u00b7 " + f.rpm + " RPM" : " \u00b7 no speed reported");
+      const meta = document.createElement("div");
+      meta.className = "ameta";
+      const bits = [];
+      if (typeof f.pwm_pct === "number")
+        bits.push(f.pwm_pct + "% PWM");
+      if (typeof f.min_rpm === "number" && typeof f.max_rpm === "number")
+        bits.push("range " + f.min_rpm + "\u2013" + f.max_rpm + " RPM");
+      else if (typeof f.min_rpm === "number")
+        bits.push("min " + f.min_rpm + " RPM");
+      else if (typeof f.max_rpm === "number")
+        bits.push("max " + f.max_rpm + " RPM");
+      if (!bits.length) bits.push(f.device || "");
+      meta.textContent = bits.join(" \u00b7 ");
+      card.appendChild(name);
+      card.appendChild(meta);
+      box.appendChild(card);
+    });
+  } catch (e) { /* fans is best-effort */ }
 }
 
 function activityCard(line) {

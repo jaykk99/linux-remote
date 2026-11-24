@@ -59,7 +59,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.34.0"
+VERSION = "1.35.0"
 
 
 # ---------------------------------------------------------------------------
@@ -5361,6 +5361,9 @@ DRM_DIR = "/sys/class/drm"
 # NVIDIA proc root, overridable in tests with a fake proc tree.
 NVIDIA_PROC_DIR = "/proc/driver/nvidia/gpus"
 
+# hwmon root, overridable in tests with a fake sys tree.
+HWMON_DIR = "/sys/class/hwmon"
+
 # PCI vendor IDs seen on GPUs, by the integer in the sysfs
 # `vendor` file. Anything else reports as "Unknown".
 GPU_VENDORS = {
@@ -6637,6 +6640,148 @@ def gpu_info(request: Request, x_api_key: str = Header(default="")):
         "available": bool(gpus),
         "count": len(gpus),
         "gpus": gpus,
+    }
+
+
+def _read_hwmon_text(hwmon_dir: str, name: str) -> Optional[str]:
+    """One stripped line from a hwmon sysfs file, or None.
+
+    None where the file is missing, unreadable, or blank. Used for
+    text fields (chip name, fan label).
+    """
+    try:
+        with open(os.path.join(hwmon_dir, name)) as f:
+            text = f.read().strip()
+    except OSError:
+        return None
+    return text or None
+
+
+def _read_hwmon_int(hwmon_dir: str, name: str) -> Optional[int]:
+    """One integer from a hwmon sysfs file, or None.
+
+    None where the file is missing, unreadable, or non-numeric.
+    A malformed value never takes the whole fan down.
+    """
+    try:
+        with open(os.path.join(hwmon_dir, name)) as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _fan_sort_key(device: str, number: int) -> tuple:
+    """Sort fans numerically on an hwmon<n> device, else by name.
+
+    hwmon2 sorts before hwmon10; a non-hwmon device name sorts
+    after the hwmon<n> entries, by name, so the order is stable
+    either way. (The reader only keeps hwmon<n> entries, so the
+    fallback is defensive.)
+    """
+    if device.startswith("hwmon") and device[5:].isdigit():
+        return (0, int(device[5:]), device, number)
+    return (1, 0, device, number)
+
+
+def _read_fans() -> list[dict]:
+    """Fan rows from /sys/class/hwmon.
+
+    One row per `fan<n>_input` file in an `hwmon<m>` directory:
+    the chip name from the device's `name` file (falling back to
+    the hwmon directory name where the chip reports none), the fan
+    label where the driver reports one, the speed in RPM, and the
+    min/max RPM limits where the driver reports them, plus the PWM
+    duty cycle as a percent (the raw `fan<n>_pwm` value is 0-255).
+    A missing or malformed file yields None for that field, never
+    a skipped fan: a fan that reports no speed file still shows up
+    with rpm null, and a negative RPM (a sensor glitch, never a
+    real speed) is treated as null. Files that are not fan speed
+    inputs (`temp<n>_input`, `in<n>_input`, `pwm<n>` without a
+    matching fan, and the `name`/`uevent` files) are skipped, as
+    are entries that are not `hwmon<m>` directories. An absent
+    hwmon directory yields an empty list, which is the honest
+    no-fan state for VMs, containers, and fanless hosts, not an
+    error. Nothing here runs a command.
+    """
+    try:
+        entries = os.listdir(HWMON_DIR)
+    except OSError:
+        return []
+    fans: list[dict] = []
+    for entry in entries:
+        if not (entry.startswith("hwmon") and entry[5:].isdigit()):
+            continue
+        hwmon_dir = os.path.join(HWMON_DIR, entry)
+        if not os.path.isdir(hwmon_dir):
+            continue
+        try:
+            files = os.listdir(hwmon_dir)
+        except OSError:
+            continue
+        chip = _read_hwmon_text(hwmon_dir, "name") or entry
+        numbers = sorted(
+            int(m.group(1))
+            for name in files
+            if (m := re.match(r"^fan(\d+)_input$", name))
+        )
+        for number in numbers:
+            rpm = _read_hwmon_int(hwmon_dir, f"fan{number}_input")
+            if rpm is not None and rpm < 0:
+                rpm = None
+            pwm = _read_hwmon_int(hwmon_dir, f"fan{number}_pwm")
+            if pwm is not None and not 0 <= pwm <= 255:
+                pwm = None
+            min_rpm = _read_hwmon_int(hwmon_dir, f"fan{number}_min")
+            if min_rpm is not None and min_rpm < 0:
+                min_rpm = None
+            max_rpm = _read_hwmon_int(hwmon_dir, f"fan{number}_max")
+            if max_rpm is not None and max_rpm < 0:
+                max_rpm = None
+            fans.append({
+                "name": f"fan{number}",
+                "device": entry,
+                "chip": chip,
+                "label": _read_hwmon_text(
+                    hwmon_dir, f"fan{number}_label"
+                ),
+                "rpm": rpm,
+                "min_rpm": min_rpm,
+                "max_rpm": max_rpm,
+                "pwm_pct": (
+                    round(pwm / 255 * 100, 1)
+                    if pwm is not None else None
+                ),
+            })
+    fans.sort(key=lambda f: _fan_sort_key(f["device"], int(f["name"][3:])))
+    return fans
+
+
+@app.get("/fans")
+def fans_info(request: Request, x_api_key: str = Header(default="")):
+    """Fan speeds. Auth required, read-only.
+
+    One row per fan from /sys/class/hwmon: chip name, fan label,
+    speed in RPM, min/max RPM limits where the driver reports
+    them, and PWM duty cycle as a percent. `available` is true
+    when at least one fan is found, and `fastest` is the fan with
+    the highest reported RPM (null where no fan reports one). On
+    hosts with no fans at all (VMs, containers, fanless hosts)
+    the list is empty and `available` is false: an honest no-fan
+    state, not an error. Nothing here runs a command.
+    """
+    require_key(request, x_api_key)
+    fans = _read_fans()
+    with_rpm = [f for f in fans if f["rpm"] is not None]
+    fastest = max(with_rpm, key=lambda f: f["rpm"]) if with_rpm else None
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "host": socket.gethostname(),
+        "available": bool(fans),
+        "count": len(fans),
+        "fastest": fastest,
+        "fans": fans,
     }
 
 

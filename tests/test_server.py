@@ -3950,3 +3950,222 @@ def test_gpu_sorted_numeric(client, tmp_path, monkeypatch):
     assert [g["name"] for g in body["gpus"]] == [
         "card0", "card2", "card10",
     ]
+
+
+# ---------------------------------------------------------------------------
+# fans
+# ---------------------------------------------------------------------------
+
+def test_fans_requires_auth(client):
+    r = client.get("/fans")
+    assert r.status_code == 401
+    r = client.get("/fans", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_fans_snapshot(client):
+    r = client.get("/fans", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert isinstance(body["host"], str) and body["host"]
+    # This VM has /sys/class/hwmon but no fan inputs: the honest
+    # no-fan state is an empty list and available false, not an
+    # error.
+    assert body["count"] == len(body["fans"])
+    if body["fans"]:
+        assert body["available"] is True
+    else:
+        assert body["available"] is False
+        assert body["fastest"] is None
+    for f in body["fans"]:
+        assert isinstance(f["name"], str) and f["name"]
+        assert f["rpm"] is None or f["rpm"] >= 0
+        assert f["pwm_pct"] is None or 0 <= f["pwm_pct"] <= 100
+
+
+def _fake_hwmon(tmp_path, devices):
+    """Build a fake /sys/class/hwmon tree.
+
+    devices: mapping of hwmon dir name to a spec dict:
+      "name": chip name text, or None for no name file,
+      "files": {file: text or None} written into the hwmon dir;
+        None means the file is absent.
+    """
+    hwmon_root = tmp_path / "sys" / "class" / "hwmon"
+    hwmon_root.mkdir(parents=True, exist_ok=True)
+    for device, spec in devices.items():
+        dev_dir = hwmon_root / device
+        dev_dir.mkdir(exist_ok=True)
+        if spec.get("name") is not None:
+            (dev_dir / "name").write_text(spec["name"])
+        for fname, text in spec.get("files", {}).items():
+            if text is not None:
+                (dev_dir / fname).write_text(text)
+    return str(hwmon_root)
+
+
+def _fan_row(name, device, chip, **overrides):
+    """Full expected row for a fake fan, fields defaulting None."""
+    row = {
+        "name": name,
+        "device": device,
+        "chip": chip,
+        "label": None,
+        "rpm": None,
+        "min_rpm": None,
+        "max_rpm": None,
+        "pwm_pct": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_fans_fake_sys(client, tmp_path, monkeypatch):
+    hwmon = _fake_hwmon(tmp_path, {
+        "hwmon0": {
+            "name": "coretemp\n",
+            "files": {
+                "fan1_input": "1200\n",
+                "fan1_label": "CPU Fan\n",
+                "fan1_min": "600\n",
+                "fan1_max": "3000\n",
+                "fan1_pwm": "128\n",
+                "fan2_input": "0\n",
+                "fan2_label": "Chassis Fan\n",
+            },
+        },
+        "hwmon1": {
+            "name": "nct6798\n",
+            "files": {
+                "fan1_input": "2400\n",
+                "fan1_pwm": "255\n",
+            },
+        },
+    })
+    monkeypatch.setattr(server, "HWMON_DIR", hwmon)
+    r = client.get("/fans", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    assert body["count"] == 3
+    assert body["fastest"] == _fan_row(
+        "fan1", "hwmon1", "nct6798", rpm=2400, pwm_pct=100.0)
+    assert body["fans"] == [
+        _fan_row("fan1", "hwmon0", "coretemp", label="CPU Fan",
+                 rpm=1200, min_rpm=600, max_rpm=3000, pwm_pct=50.2),
+        _fan_row("fan2", "hwmon0", "coretemp", label="Chassis Fan",
+                 rpm=0),
+        _fan_row("fan1", "hwmon1", "nct6798", rpm=2400, pwm_pct=100.0),
+    ]
+
+
+def test_fans_no_hwmon_yields_empty(client, monkeypatch):
+    monkeypatch.setattr(server, "HWMON_DIR", "/nonexistent-hwmon-dir")
+    r = client.get("/fans", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is False
+    assert body["count"] == 0
+    assert body["fastest"] is None
+    assert body["fans"] == []
+
+
+def test_fans_non_fan_entries_skipped(client, tmp_path, monkeypatch):
+    hwmon = _fake_hwmon(tmp_path, {
+        "hwmon0": {
+            "name": "it8721\n",
+            "files": {
+                "fan1_input": "900\n",
+                # Temperature/voltage inputs and a bare pwm with no
+                # matching fan input are not fans.
+                "temp1_input": "42000\n",
+                "in0_input": "12000\n",
+                "pwm2": "200\n",
+                "uevent": "OF_NAME=it8721\n",
+            },
+        },
+        # Not an hwmon<n> directory: ignored entirely.
+        "acpi": {
+            "name": "acpitz\n",
+            "files": {"fan1_input": "9999\n"},
+        },
+    })
+    monkeypatch.setattr(server, "HWMON_DIR", hwmon)
+    r = client.get("/fans", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["fans"] == [
+        _fan_row("fan1", "hwmon0", "it8721", rpm=900),
+    ]
+
+
+def test_fans_bad_values_kept_not_skipped(client, tmp_path, monkeypatch):
+    hwmon = _fake_hwmon(tmp_path, {
+        "hwmon0": {
+            "name": "w83627ehf\n",
+            "files": {
+                "fan1_input": "not-a-number\n",
+                "fan1_pwm": "300\n",
+                "fan1_min": "-5\n",
+                "fan2_input": "-100\n",
+                "fan2_max": "abc\n",
+            },
+        },
+    })
+    monkeypatch.setattr(server, "HWMON_DIR", hwmon)
+    r = client.get("/fans", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    # Malformed values degrade to null; neither fan is skipped,
+    # and with no reported RPM there is no fastest fan.
+    assert body["fastest"] is None
+    assert body["fans"] == [
+        _fan_row("fan1", "hwmon0", "w83627ehf"),
+        _fan_row("fan2", "hwmon0", "w83627ehf"),
+    ]
+
+
+def test_fans_missing_chip_name_falls_back(client, tmp_path, monkeypatch):
+    hwmon = _fake_hwmon(tmp_path, {
+        "hwmon3": {
+            "name": None,
+            "files": {"fan1_input": "1500\n"},
+        },
+    })
+    monkeypatch.setattr(server, "HWMON_DIR", hwmon)
+    r = client.get("/fans", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["fans"] == [
+        _fan_row("fan1", "hwmon3", "hwmon3", rpm=1500),
+    ]
+
+
+def test_fans_sorted_numeric(client, tmp_path, monkeypatch):
+    hwmon = _fake_hwmon(tmp_path, {
+        "hwmon10": {
+            "name": "chip-b\n",
+            "files": {"fan1_input": "100\n"},
+        },
+        "hwmon2": {
+            "name": "chip-a\n",
+            "files": {
+                "fan10_input": "200\n",
+                "fan2_input": "300\n",
+            },
+        },
+    })
+    monkeypatch.setattr(server, "HWMON_DIR", hwmon)
+    r = client.get("/fans", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    # Numeric order, not lexicographic: hwmon2 before hwmon10,
+    # fan2 before fan10 within the same device.
+    assert [(f["device"], f["name"]) for f in body["fans"]] == [
+        ("hwmon2", "fan2"),
+        ("hwmon2", "fan10"),
+        ("hwmon10", "fan1"),
+    ]

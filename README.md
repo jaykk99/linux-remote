@@ -169,6 +169,16 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   the list is empty and `available` is false: an honest no-GPU
   state, not an error. The phone app lists the GPUs in the
   activity view, saying so where the host has no GPU.
+- `GET /fans` - header `X-API-Key: <key>`, read-only fan speeds:
+  one row per `fan<n>_input` under `/sys/class/hwmon` (chip name
+  from the device's `name` file, fan label, speed in RPM, min/max
+  RPM limits where the driver reports them, and PWM duty cycle as
+  a percent from the raw 0-255 value), plus `available`, true when
+  at least one fan is found, and `fastest`, the fan with the
+  highest reported RPM. Non-fan inputs are skipped. On hosts with
+  no fans at all the list is empty and `available` is false: an
+  honest no-fan state, not an error. The phone app lists the fans
+  in the activity view, saying so where the host has no fans.
 
 ## Configuration (env vars)
 
