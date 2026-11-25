@@ -59,7 +59,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-VERSION = "1.35.0"
+VERSION = "1.36.0"
 
 
 # ---------------------------------------------------------------------------
@@ -6782,6 +6782,140 @@ def fans_info(request: Request, x_api_key: str = Header(default="")):
         "count": len(fans),
         "fastest": fastest,
         "fans": fans,
+    }
+
+
+def _temp_sort_key(device: str, number: int) -> tuple:
+    """Sort sensors numerically on an hwmon<n> device, else by name.
+
+    hwmon2 sorts before hwmon10; a non-hwmon device name sorts
+    after the hwmon<n> entries, by name, so the order is stable
+    either way. (The reader only keeps hwmon<n> entries, so the
+    fallback is defensive.)
+    """
+    if device.startswith("hwmon") and device[5:].isdigit():
+        return (0, int(device[5:]), device, number)
+    return (1, 0, device, number)
+
+
+def _hwmon_temp_c(hwmon_dir: str, name: str) -> Optional[float]:
+    """A temperature in degrees C from a hwmon millidegree file, or None.
+
+    The file holds millidegrees (42000 is 42.0 C). None where the
+    file is missing, unreadable, or non-numeric, and also where
+    the value is outside -100..200 C: a real sensor never reports
+    that, so it is a glitch, not a reading. A malformed value
+    never takes the whole sensor down.
+    """
+    milli = _read_hwmon_int(hwmon_dir, name)
+    if milli is None:
+        return None
+    if not -100_000 <= milli <= 200_000:
+        return None
+    return round(milli / 1000, 1)
+
+
+def _read_temps() -> list[dict]:
+    """Temperature sensor rows from /sys/class/hwmon.
+
+    One row per `temp<n>_input` file in an `hwmon<m>` directory:
+    the chip name from the device's `name` file (falling back to
+    the hwmon directory name where the chip reports none), the
+    sensor label where the driver reports one, the temperature in
+    degrees C, the min/max/crit thresholds in degrees C where the
+    driver reports them, and the alarm flag (true when the
+    driver's `temp<n>_alarm` file reads 1, false when it reads 0,
+    null where the driver reports none). This is the hwmon view
+    of the same hardware `/temperature` shows as thermal zones:
+    the two disagree on hosts where the thermal subsystem and
+    the hwmon drivers enumerate different sensors, and both are
+    reported honestly. A missing or malformed file yields None
+    for that field, never a skipped sensor: a sensor that reports
+    no reading still shows up with temp_c null, and an
+    out-of-range reading (below -100 C or above 200 C, a sensor
+    glitch) is treated as null. Files that are not temperature
+    inputs (`fan<n>_input`, `in<n>_input`, `pwm<n>`, and the
+    `name`/`uevent` files) are skipped, as are entries that are
+    not `hwmon<m>` directories. An absent hwmon directory yields
+    an empty list, which is the honest no-sensor state for VMs,
+    containers, and hosts whose drivers expose no hwmon
+    temperatures, not an error. Nothing here runs a command.
+    """
+    try:
+        entries = os.listdir(HWMON_DIR)
+    except OSError:
+        return []
+    sensors: list[dict] = []
+    for entry in entries:
+        if not (entry.startswith("hwmon") and entry[5:].isdigit()):
+            continue
+        hwmon_dir = os.path.join(HWMON_DIR, entry)
+        if not os.path.isdir(hwmon_dir):
+            continue
+        try:
+            files = os.listdir(hwmon_dir)
+        except OSError:
+            continue
+        chip = _read_hwmon_text(hwmon_dir, "name") or entry
+        numbers = sorted(
+            int(m.group(1))
+            for name in files
+            if (m := re.match(r"^temp(\d+)_input$", name))
+        )
+        for number in numbers:
+            alarm = _read_hwmon_int(hwmon_dir, f"temp{number}_alarm")
+            sensors.append({
+                "name": f"temp{number}",
+                "device": entry,
+                "chip": chip,
+                "label": _read_hwmon_text(
+                    hwmon_dir, f"temp{number}_label"
+                ),
+                "temp_c": _hwmon_temp_c(hwmon_dir, f"temp{number}_input"),
+                "min_c": _hwmon_temp_c(hwmon_dir, f"temp{number}_min"),
+                "max_c": _hwmon_temp_c(hwmon_dir, f"temp{number}_max"),
+                "crit_c": _hwmon_temp_c(hwmon_dir, f"temp{number}_crit"),
+                "alarm": (
+                    True if alarm == 1 else
+                    False if alarm == 0 else None
+                ),
+            })
+    sensors.sort(
+        key=lambda s: _temp_sort_key(s["device"], int(s["name"][4:]))
+    )
+    return sensors
+
+
+@app.get("/temps")
+def temps_info(request: Request, x_api_key: str = Header(default="")):
+    """Hardware temperature sensors. Auth required, read-only.
+
+    One row per temperature sensor from /sys/class/hwmon: chip
+    name, sensor label, temperature in degrees C, min/max/crit
+    thresholds where the driver reports them, and the alarm flag.
+    `available` is true when at least one sensor is found, and
+    `hottest` is the sensor with the highest reported temperature
+    (null where no sensor reports one). On hosts with no hwmon
+    temperature sensors at all (VMs, containers, hosts whose
+    drivers expose none) the list is empty and `available` is
+    false: an honest no-sensor state, not an error. Nothing here
+    runs a command.
+    """
+    require_key(request, x_api_key)
+    sensors = _read_temps()
+    with_temp = [s for s in sensors if s["temp_c"] is not None]
+    hottest = (
+        max(with_temp, key=lambda s: s["temp_c"]) if with_temp else None
+    )
+    return {
+        "ok": True,
+        "service": "linux-remote",
+        "version": VERSION,
+        "host": socket.gethostname(),
+        "available": bool(sensors),
+        "count": len(sensors),
+        "hottest": hottest,
+        "sensors": sensors,
     }
 
 

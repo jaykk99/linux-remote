@@ -4169,3 +4169,209 @@ def test_fans_sorted_numeric(client, tmp_path, monkeypatch):
         ("hwmon2", "fan10"),
         ("hwmon10", "fan1"),
     ]
+
+# temps
+# ---------------------------------------------------------------------------
+
+def test_temps_requires_auth(client):
+    r = client.get("/temps")
+    assert r.status_code == 401
+    r = client.get("/temps", headers=auth("wrong"))
+    assert r.status_code == 401
+
+
+def test_temps_snapshot(client):
+    r = client.get("/temps", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["service"] == "linux-remote"
+    assert body["version"] == server.VERSION
+    assert isinstance(body["host"], str) and body["host"]
+    # This VM has /sys/class/hwmon but may have no temp inputs:
+    # the honest no-sensor state is an empty list and available
+    # false, not an error.
+    assert body["count"] == len(body["sensors"])
+    if body["sensors"]:
+        assert body["available"] is True
+    else:
+        assert body["available"] is False
+        assert body["hottest"] is None
+    for s in body["sensors"]:
+        assert isinstance(s["name"], str) and s["name"]
+        assert s["temp_c"] is None or -100 <= s["temp_c"] <= 200
+        assert s["crit_c"] is None or -100 <= s["crit_c"] <= 200
+        assert s["alarm"] is None or isinstance(s["alarm"], bool)
+
+
+def _temp_row(name, device, chip, **overrides):
+    """Full expected row for a fake temp sensor, fields defaulting None."""
+    row = {
+        "name": name,
+        "device": device,
+        "chip": chip,
+        "label": None,
+        "temp_c": None,
+        "min_c": None,
+        "max_c": None,
+        "crit_c": None,
+        "alarm": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_temps_fake_sys(client, tmp_path, monkeypatch):
+    hwmon = _fake_hwmon(tmp_path, {
+        "hwmon0": {
+            "name": "coretemp\n",
+            "files": {
+                "temp1_input": "42000\n",
+                "temp1_label": "Package id 0\n",
+                "temp1_min": "10000\n",
+                "temp1_max": "80000\n",
+                "temp1_crit": "100000\n",
+                "temp1_alarm": "0\n",
+                "temp2_input": "38500\n",
+                "temp2_label": "Core 0\n",
+                "temp2_crit": "100000\n",
+            },
+        },
+        "hwmon1": {
+            "name": "nct6798\n",
+            "files": {
+                "temp1_input": "55000\n",
+                "temp1_crit": "95000\n",
+                "temp1_alarm": "1\n",
+            },
+        },
+    })
+    monkeypatch.setattr(server, "HWMON_DIR", hwmon)
+    r = client.get("/temps", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    assert body["count"] == 3
+    assert body["hottest"] == _temp_row(
+        "temp1", "hwmon1", "nct6798", temp_c=55.0, crit_c=95.0,
+        alarm=True)
+    assert body["sensors"] == [
+        _temp_row("temp1", "hwmon0", "coretemp", label="Package id 0",
+                 temp_c=42.0, min_c=10.0, max_c=80.0, crit_c=100.0,
+                 alarm=False),
+        _temp_row("temp2", "hwmon0", "coretemp", label="Core 0",
+                 temp_c=38.5, crit_c=100.0),
+        _temp_row("temp1", "hwmon1", "nct6798", temp_c=55.0,
+                 crit_c=95.0, alarm=True),
+    ]
+
+
+def test_temps_no_hwmon_yields_empty(client, monkeypatch):
+    monkeypatch.setattr(server, "HWMON_DIR", "/nonexistent-hwmon-dir")
+    r = client.get("/temps", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is False
+    assert body["count"] == 0
+    assert body["hottest"] is None
+    assert body["sensors"] == []
+
+
+def test_temps_non_temp_entries_skipped(client, tmp_path, monkeypatch):
+    hwmon = _fake_hwmon(tmp_path, {
+        "hwmon0": {
+            "name": "it8721\n",
+            "files": {
+                "temp1_input": "40000\n",
+                # Fan/voltage inputs and a bare pwm are not
+                # temperature sensors.
+                "fan1_input": "900\n",
+                "in0_input": "12000\n",
+                "pwm1": "200\n",
+                "uevent": "OF_NAME=it8721\n",
+            },
+        },
+        # Not an hwmon<n> directory: ignored entirely.
+        "acpi": {
+            "name": "acpitz\n",
+            "files": {"temp1_input": "99999\n"},
+        },
+    })
+    monkeypatch.setattr(server, "HWMON_DIR", hwmon)
+    r = client.get("/temps", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["sensors"] == [
+        _temp_row("temp1", "hwmon0", "it8721", temp_c=40.0),
+    ]
+
+
+def test_temps_bad_values_kept_not_skipped(client, tmp_path, monkeypatch):
+    hwmon = _fake_hwmon(tmp_path, {
+        "hwmon0": {
+            "name": "w83627ehf\n",
+            "files": {
+                "temp1_input": "not-a-number\n",
+                "temp1_crit": "abc\n",
+                "temp1_alarm": "2\n",
+                # 250 C is a sensor glitch, not a reading.
+                "temp2_input": "250000\n",
+                "temp2_max": "-150000\n",
+            },
+        },
+    })
+    monkeypatch.setattr(server, "HWMON_DIR", hwmon)
+    r = client.get("/temps", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    # Malformed and out-of-range values degrade to null; neither
+    # sensor is skipped, and with no reported temperature there
+    # is no hottest sensor.
+    assert body["hottest"] is None
+    assert body["sensors"] == [
+        _temp_row("temp1", "hwmon0", "w83627ehf"),
+        _temp_row("temp2", "hwmon0", "w83627ehf"),
+    ]
+
+
+def test_temps_missing_chip_name_falls_back(client, tmp_path, monkeypatch):
+    hwmon = _fake_hwmon(tmp_path, {
+        "hwmon3": {
+            "name": None,
+            "files": {"temp1_input": "31000\n"},
+        },
+    })
+    monkeypatch.setattr(server, "HWMON_DIR", hwmon)
+    r = client.get("/temps", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["sensors"] == [
+        _temp_row("temp1", "hwmon3", "hwmon3", temp_c=31.0),
+    ]
+
+
+def test_temps_sorted_numeric(client, tmp_path, monkeypatch):
+    hwmon = _fake_hwmon(tmp_path, {
+        "hwmon10": {
+            "name": "chip-b\n",
+            "files": {"temp1_input": "10000\n"},
+        },
+        "hwmon2": {
+            "name": "chip-a\n",
+            "files": {
+                "temp10_input": "20000\n",
+                "temp2_input": "30000\n",
+            },
+        },
+    })
+    monkeypatch.setattr(server, "HWMON_DIR", hwmon)
+    r = client.get("/temps", headers=auth())
+    assert r.status_code == 200
+    body = r.json()
+    # Numeric order, not lexicographic: hwmon2 before hwmon10,
+    # temp2 before temp10 within the same device.
+    assert [(s["device"], s["name"]) for s in body["sensors"]] == [
+        ("hwmon2", "temp2"),
+        ("hwmon2", "temp10"),
+        ("hwmon10", "temp1"),
+    ]

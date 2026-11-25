@@ -414,11 +414,11 @@
     padding: 2px 16px 12px; scrollbar-width: none;
   }
   #actstats::-webkit-scrollbar { display: none; }
-  #actprocs, #actnet, #actdisk, #actservices, #actcpu, #actmemory, #acttemp, #actbattery, #actgpu, #actfans {
+  #actprocs, #actnet, #actdisk, #actservices, #actcpu, #actmemory, #acttemp, #actbattery, #actgpu, #actfans, #acttemps {
     flex-shrink: 0; padding: 0 16px 12px;
     display: flex; flex-direction: column; gap: 8px;
   }
-  #actprocs .label, #actnet .label, #actdisk .label, #actservices .label, #actcpu .label, #actmemory .label, #acttemp .label, #actbattery .label, #actgpu .label, #actfans .label {
+  #actprocs .label, #actnet .label, #actdisk .label, #actservices .label, #actcpu .label, #actmemory .label, #acttemp .label, #actbattery .label, #actgpu .label, #actfans .label, #acttemps .label {
     font-size: 11px; font-weight: 700; text-transform: uppercase;
     letter-spacing: 1.4px; color: var(--text3);
   }
@@ -567,6 +567,7 @@
     <div id="actbattery"></div>
     <div id="actgpu"></div>
     <div id="actfans"></div>
+    <div id="acttemps"></div>
     <div id="actlist"></div>
   </div>
 
@@ -1158,6 +1159,7 @@ async function openActivity() {
   loadActBattery();
   loadActGpu();
   loadActFans();
+  loadActTemps();
   const list = $("actlist");
   list.innerHTML = '<div class="hint" style="margin-top:24px;">Loading…</div>';
   const base = baseUrl(), key = keyEl.value.trim();
@@ -1629,6 +1631,66 @@ async function loadActFans() {
       box.appendChild(card);
     });
   } catch (e) { /* fans is best-effort */ }
+}
+
+// Hardware temperature sensors from /temps, under the fans list.
+// Best-effort: older servers (no /temps yet) just show nothing.
+// Like the fans list, a host with no hwmon temperature sensors
+// still gets a line saying so: the no-sensor state is the honest
+// answer for VMs, containers, and hosts whose drivers expose no
+// hwmon temperatures, not a missing card. This is the hwmon view;
+// /temperature in the same view shows the thermal-zone view.
+async function loadActTemps() {
+  const box = $("acttemps");
+  box.innerHTML = "";
+  const base = baseUrl(), key = keyEl.value.trim();
+  if (!base || !key) return;
+  try {
+    const r = await fetch(base + "/temps", { headers: { "X-API-Key": key } });
+    if (!r.ok) return;
+    const d = await r.json();
+    const sensors = (d && d.sensors) || [];
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = "Temps"
+      + (sensors.length ? " \u00b7 " + sensors.length : "");
+    box.appendChild(label);
+    if (!sensors.length) {
+      const card = document.createElement("div");
+      card.className = "actcard";
+      const name = document.createElement("div");
+      name.className = "acmd";
+      name.textContent = "No hwmon temperature sensors on this host";
+      card.appendChild(name);
+      box.appendChild(card);
+      return;
+    }
+    sensors.forEach(s => {
+      const card = document.createElement("div");
+      card.className = "actcard";
+      const name = document.createElement("div");
+      name.className = "acmd";
+      name.textContent = (s.label || s.name)
+        + (s.chip ? " \u00b7 " + s.chip : "")
+        + (typeof s.temp_c === "number" ? " \u00b7 " + s.temp_c + " \u00b0C" : " \u00b7 no reading");
+      const meta = document.createElement("div");
+      meta.className = "ameta";
+      const bits = [];
+      if (typeof s.crit_c === "number")
+        bits.push("crit " + s.crit_c + " \u00b0C");
+      if (typeof s.max_c === "number")
+        bits.push("max " + s.max_c + " \u00b0C");
+      if (typeof s.min_c === "number")
+        bits.push("min " + s.min_c + " \u00b0C");
+      if (s.alarm === true)
+        bits.push("alarm");
+      if (!bits.length) bits.push(s.device || "");
+      meta.textContent = bits.join(" \u00b7 ");
+      card.appendChild(name);
+      card.appendChild(meta);
+      box.appendChild(card);
+    });
+  } catch (e) { /* temps is best-effort */ }
 }
 
 function activityCard(line) {

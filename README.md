@@ -179,6 +179,22 @@ Don't open port 8000 to the public internet. Use Tailscale instead:
   no fans at all the list is empty and `available` is false: an
   honest no-fan state, not an error. The phone app lists the fans
   in the activity view, saying so where the host has no fans.
+- `GET /temps` - header `X-API-Key: <key>`, read-only hardware
+  temperature sensors: one row per `temp<n>_input` under
+  `/sys/class/hwmon` (chip name from the device's `name` file,
+  sensor label, temperature in degrees C from the millidegree
+  file, min/max/crit thresholds where the driver reports them,
+  and the alarm flag), plus `available`, true when at least one
+  sensor is found, and `hottest`, the sensor with the highest
+  reported temperature. This is the hwmon view of the same
+  hardware `/temperature` shows as thermal zones. Non-temperature
+  inputs are skipped, and a missing, malformed, or out-of-range
+  (below -100 C or above 200 C) reading yields null for that
+  field, never a skipped sensor. On hosts with no hwmon
+  temperature sensors at all the list is empty and `available`
+  is false: an honest no-sensor state, not an error. The phone
+  app lists the sensors in the activity view, saying so where
+  the host has none.
 
 ## Configuration (env vars)
 
